@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自媒体内容管理</title>
+    <style>
+        :root {
+            --primary: #4f46e5; --primary-hover: #4338ca;
+            --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0;
+            --text: #1e293b; --text-secondary: #64748b;
+            --success: #22c55e; --warning: #f59e0b; --danger: #ef4444;
+            --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg); color: var(--text); line-height: 1.6;
+        }
+        .container { max-width: 1300px; margin: 0 auto; padding: 20px; }
+        header {
+            background: var(--card); border-bottom: 1px solid var(--border);
+            padding: 14px 0; margin-bottom: 20px;
+        }
+        header .container { display: flex; justify-content: space-between; align-items: center; }
+        h1 { font-size: 20px; font-weight: 600; }
+
+        .status-bar { display: flex; gap: 16px; font-size: 12px; }
+        .status-item { display: flex; align-items: center; gap: 4px; }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; }
+        .status-dot.on { background: var(--success); }
+        .status-dot.off { background: var(--danger); }
+
+        .layout { display: grid; grid-template-columns: 420px 1fr; gap: 20px; }
+        @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+
+        .card {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow);
+        }
+        .card h2 { font-size: 15px; margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+
+        .form-group { margin-bottom: 14px; }
+        .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px; color: var(--text-secondary); }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; padding: 9px 11px;
+            border: 1px solid var(--border); border-radius: var(--radius);
+            font-size: 13px; font-family: inherit;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none; border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79,70,229,0.08);
+        }
+        .form-group textarea { min-height: 90px; resize: vertical; }
+        .form-row { display: flex; gap: 10px; }
+        .form-row .form-group { flex: 1; }
+
+        .btn {
+            display: inline-flex; align-items: center; gap: 5px;
+            padding: 9px 16px; border: none; border-radius: var(--radius);
+            font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.2s;
+        }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .btn-success { background: var(--success); color: white; }
+        .btn-success:hover { opacity: 0.85; }
+        .btn-warning { background: var(--warning); color: white; }
+        .btn-outline { background: white; color: var(--primary); border: 1px solid var(--primary); }
+        .btn-outline:hover { background: #f0f0ff; }
+        .btn-xs { padding: 4px 10px; font-size: 11px; }
+        .btn-group { display: flex; gap: 6px; flex-wrap: wrap; }
+
+        .content-list { max-height: 65vh; overflow-y: auto; }
+        .content-item {
+            padding: 12px 14px; border: 1px solid var(--border);
+            border-radius: var(--radius); margin-bottom: 6px; cursor: pointer;
+            transition: all 0.15s; display: flex; justify-content: space-between; align-items: center;
+        }
+        .content-item:hover { border-color: var(--primary); background: #f8f8ff; }
+        .content-item.active { border-color: var(--primary); background: #eef0ff; }
+        .content-item .info { flex: 1; min-width: 0; }
+        .content-item .topic { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .content-item .meta { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+        .content-item .actions { display: flex; gap: 4px; flex-shrink: 0; margin-left: 10px; }
+
+        .badge {
+            display: inline-block; padding: 1px 7px; border-radius: 10px;
+            font-size: 11px; font-weight: 500;
+        }
+        .badge-draft { background: #f1f5f9; color: #64748b; }
+        .badge-ai_generated { background: #dbeafe; color: #2563eb; }
+        .badge-approved { background: #dcfce7; color: #16a34a; }
+        .badge-scheduled { background: #fef3c7; color: #d97706; }
+        .badge-published { background: #d1fae5; color: #059669; }
+        .badge-failed { background: #fee2e2; color: #dc2626; }
+
+        .tab-bar { display: flex; gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
+        .tab { padding: 7px 14px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; color: var(--text-secondary); }
+        .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+        .result-box {
+            background: #f8fafc; border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 14px; max-height: 350px;
+            overflow-y: auto; white-space: pre-wrap; font-size: 13px; line-height: 1.7;
+        }
+        .empty-state { text-align: center; padding: 40px; color: var(--text-secondary); font-size: 14px; }
+
+        .spinner {
+            display: inline-block; width: 14px; height: 14px;
+            border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+            border-radius: 50%; animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .toast {
+            position: fixed; top: 16px; right: 16px;
+            padding: 10px 20px; border-radius: var(--radius);
+            color: white; font-size: 13px; z-index: 999;
+            animation: slideIn 0.3s ease;
+        }
+        .toast-success { background: var(--success); }
+        .toast-error { background: var(--danger); }
+        .toast-info { background: var(--primary); }
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+        .schedule-row { display: flex; gap: 8px; align-items: center; }
+        .schedule-row input[type="datetime-local"] { flex: 1; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>📝 自媒体内容管理</h1>
+            <div class="status-bar" id="sysStatus">加载中...</div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="layout">
+            <!-- 左侧：创建 & 编辑 -->
+            <div>
+                <div class="card">
+                    <h2>✍️ <span id="formTitle">创建内容</span></h2>
+                    <input type="hidden" id="editId">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>平台</label>
+                            <select id="platform">
+                                <option value="xiaohongshu">小红书</option>
+                                <option value="zhihu">知乎</option>
+                                <option value="both">双平台</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>类型</label>
+                            <select id="contentType">
+                                <option value="note">笔记</option>
+                                <option value="article">文章</option>
+                                <option value="idea">想法</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>选题</label>
+                        <input type="text" id="topic" placeholder="例如：短剧App后台长什么样？">
+                    </div>
+                    <div class="form-group">
+                        <label>核心观点（每行一个）</label>
+                        <textarea id="keyPoints" placeholder="1. 推荐算法原理&#10;2. 架构设计&#10;3. 实战经验"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="needCover"> 同时生成封面图（需 Gemini）</label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-primary" id="btnGenerate" onclick="generateDraft()">
+                            🤖 AI 生成
+                        </button>
+                        <button class="btn btn-outline" id="btnSave" onclick="saveContent()" hidden>
+                            💾 保存修改
+                        </button>
+                        <button class="btn btn-outline" id="btnCancel" onclick="cancelEdit()" hidden>
+                            取消
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 生成结果 -->
+                <div class="card" style="margin-top:14px;" id="resultCard" hidden>
+                    <div class="tab-bar">
+                        <div class="tab active" onclick="switchTab('preview')">📄 预览</div>
+                        <div class="tab" onclick="switchTab('raw')">🔧 原始</div>
+                    </div>
+                    <div id="tabPreview" class="result-box"></div>
+                    <div id="tabRaw" class="result-box" hidden></div>
+
+                    <!-- 发布操作区 -->
+                    <div style="margin-top:12px; padding:12px; background:#f8fafc; border-radius:var(--radius);">
+                        <div style="font-size:13px;font-weight:500;margin-bottom:8px;">📅 排期 & 发布</div>
+                        <div class="schedule-row">
+                            <input type="datetime-local" id="scheduleTime">
+                            <button class="btn btn-warning btn-xs" onclick="setSchedule()">⏰ 排期</button>
+                        </div>
+                        <div class="btn-group" style="margin-top:8px;">
+                            <button class="btn btn-success btn-xs" id="btnPublishXHS" onclick="publishNow('xiaohongshu')" hidden>
+                                📕 发小红书
+                            </button>
+                            <button class="btn btn-success btn-xs" id="btnPublishZH" onclick="publishNow('zhihu')" hidden>
+                                📘 发知乎
+                            </button>
+                            <button class="btn btn-outline btn-xs" id="btnApprove" onclick="approveContent()" hidden>
+                                ✅ 定稿
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧：内容列表 -->
+            <div>
+                <div class="card">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                        <h2 style="margin:0;padding:0;border:none;">📋 内容列表</h2>
+                        <div>
+                            <select id="filterStatus" onchange="loadContents()" style="padding:6px 10px;border-radius:var(--radius);border:1px solid var(--border);font-size:12px;">
+                                <option value="">全部</option>
+                                <option value="draft">草稿</option>
+                                <option value="ai_generated">AI已生成</option>
+                                <option value="approved">已定稿</option>
+                                <option value="scheduled">已排期</option>
+                                <option value="published">已发布</option>
+                                <option value="failed">失败</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="content-list" id="contentList">
+                        <div class="empty-state">加载中...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API = '/api';
+        let currentContent = null;
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadContents();
+            refreshStatus();
+            setInterval(refreshStatus, 30000);
+
+            document.getElementById('platform').addEventListener('change', e => {
+                document.getElementById('contentType').value =
+                    e.target.value === 'zhihu' ? 'article' : 'note';
+            });
+        });
+
+        async function refreshStatus() {
+            try {
+                const res = await fetch(API + '/status');
+                const d = await res.json();
+                const data = d.data || {};
+                const providers = data.providers || [];
+                const publishers = data.publishers || [];
+
+                document.getElementById('sysStatus').innerHTML = [
+                    ...providers.map(p => `<span class="status-item"><span class="status-dot ${p.available?'on':'off'}"></span>${p.name}</span>`),
+                    ...publishers.map(p => `<span class="status-item"><span class="status-dot ${p.available?'on':'off'}"></span>${p.name}(${p.platform})</span>`),
+                ].join('');
+            } catch(e) {}
+        }
+
+        async function loadContents() {
+            const status = document.getElementById('filterStatus').value;
+            const url = API + '/contents?page=1&page_size=50' + (status ? '&status=' + status : '');
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                const list = (data.data && data.data.list) || [];
+                const container = document.getElementById('contentList');
+                if (list.length === 0) {
+                    container.innerHTML = '<div class="empty-state">暂无内容，创建一个吧 ✍️</div>';
+                    return;
+                }
+                container.innerHTML = list.map(c => `
+                    <div class="content-item${currentContent && currentContent.id === c.id ? ' active' : ''}" onclick="viewContent(${c.id})">
+                        <div class="info">
+                            <div class="topic">${esc(c.topic || '(无标题)')}</div>
+                            <div class="meta">
+                                <span class="badge badge-${c.status}">${c.status}</span>
+                                ${c.platform} · ${c.content_type} · ${fmtDate(c.created_at)}
+                                ${c.scheduled_at ? ' ⏰'+fmtDate(c.scheduled_at) : ''}
+                            </div>
+                        </div>
+                        <div class="actions" onclick="event.stopPropagation()">
+                            <button class="btn btn-outline btn-xs" onclick="viewContent(${c.id})">查看</button>
+                            ${c.status === 'approved' || c.status === 'scheduled' ? `<button class="btn btn-success btn-xs" onclick="publishItem(${c.id},'${c.platform}')">发布</button>` : ''}
+                        </div>
+                    </div>
+                `).join('');
+            } catch(e) { console.error(e); }
+        }
+
+        async function viewContent(id) {
+            try {
+                const res = await fetch(API + '/contents/' + id);
+                const data = await res.json();
+                const c = data.data;
+                currentContent = c;
+
+                document.getElementById('topic').value = c.topic || '';
+                document.getElementById('keyPoints').value = c.key_points || '';
+                document.getElementById('platform').value = c.platform;
+                document.getElementById('contentType').value = c.content_type;
+                document.getElementById('editId').value = c.id;
+                document.getElementById('formTitle').textContent = '编辑内容 #' + c.id;
+
+                const body = c.xhs_body || c.zh_body || '';
+                document.getElementById('tabPreview').textContent = body || '(无正文)';
+                document.getElementById('tabRaw').textContent = c.ai_raw_output || '(无AI原始输出)';
+                document.getElementById('resultCard').hidden = false;
+
+                // 按钮状态
+                document.getElementById('btnSave').hidden = false;
+                document.getElementById('btnCancel').hidden = false;
+                document.getElementById('btnApprove').hidden = (c.status === 'approved' || c.status === 'published');
+                document.getElementById('btnPublishXHS').hidden = !(c.status === 'approved' && (c.platform === 'xiaohongshu' || c.platform === 'both'));
+                document.getElementById('btnPublishZH').hidden = !(c.status === 'approved' && (c.platform === 'zhihu' || c.platform === 'both'));
+
+                // 排期时间
+                if (c.scheduled_at) {
+                    document.getElementById('scheduleTime').value = c.scheduled_at.replace(' ', 'T').substring(0, 16);
+                }
+
+                loadContents();
+            } catch(e) { showToast('加载失败', 'error'); }
+        }
+
+        async function generateDraft() {
+            const topic = document.getElementById('topic').value.trim();
+            const keyPoints = document.getElementById('keyPoints').value.trim();
+            const platform = document.getElementById('platform').value;
+            const contentType = document.getElementById('contentType').value;
+            const needCover = document.getElementById('needCover').checked;
+
+            if (!topic || !keyPoints) { showToast('请填写选题和核心观点', 'error'); return; }
+
+            const btn = document.getElementById('btnGenerate');
+            btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> 生成中...';
+
+            try {
+                const endpoint = needCover ? '/generate/draft-with-image' : '/generate/draft';
+                const res = await fetch(API + endpoint, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({topic, key_points: keyPoints, platform, content_type: contentType, need_cover: needCover}),
+                });
+                const data = await res.json();
+                if (data.code !== 0) { showToast(data.msg || '生成失败', 'error'); return; }
+
+                const titles = data.data.titles || [];
+                const body = data.data.body || '';
+                const tags = data.data.tags || [];
+                const duration = data.data.duration_ms || data.data.text_ms || 0;
+
+                document.getElementById('tabPreview').textContent = [
+                    titles.length > 0 ? '📌 标题：\n' + titles.map((t,i) => `  ${i+1}. ${t}`).join('\n') : '',
+                    '\n📝 正文：\n' + body,
+                    tags.length > 0 ? '\n🏷️ 标签：' + tags.join(' ') : '',
+                    `\n⏱ 耗时：${(duration/1000).toFixed(1)}秒`,
+                ].join('\n');
+                document.getElementById('tabRaw').textContent = data.data.raw_output || '';
+                document.getElementById('resultCard').hidden = false;
+                document.getElementById('btnApprove').hidden = false;
+                document.getElementById('btnSave').hidden = false;
+                document.getElementById('btnCancel').hidden = false;
+
+                currentContent = data.data.content;
+                if (currentContent) {
+                    document.getElementById('editId').value = currentContent.id;
+                    document.getElementById('formTitle').textContent = '编辑内容 #' + currentContent.id;
+                }
+
+                showToast(`生成完成 ${(duration/1000).toFixed(1)}秒`, 'success');
+                loadContents();
+            } catch(e) { showToast('请求失败: '+e.message, 'error'); }
+            finally { btn.disabled = false; btn.innerHTML = '🤖 AI 生成'; }
+        }
+
+        async function saveContent() {
+            const id = document.getElementById('editId').value;
+            if (!id) return;
+            const platform = document.getElementById('platform').value;
+            const body = document.getElementById('tabPreview').textContent;
+
+            try {
+                const bodyField = platform === 'zhihu' ? 'zh_body' : 'xhs_body';
+                const titleField = platform === 'zhihu' ? 'zh_title' : 'xhs_title';
+                const res = await fetch(API + '/contents/' + id, {
+                    method: 'PUT', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        topic: document.getElementById('topic').value,
+                        key_points: document.getElementById('keyPoints').value,
+                        platform: platform,
+                        content_type: document.getElementById('contentType').value,
+                        [bodyField]: body,
+                        [titleField]: document.getElementById('topic').value,
+                    }),
+                });
+                const data = await res.json();
+                if (data.code === 0) showToast('已保存', 'success');
+            } catch(e) { showToast('保存失败', 'error'); }
+        }
+
+        function cancelEdit() {
+            currentContent = null;
+            document.getElementById('editId').value = '';
+            document.getElementById('topic').value = '';
+            document.getElementById('keyPoints').value = '';
+            document.getElementById('formTitle').textContent = '创建内容';
+            document.getElementById('resultCard').hidden = true;
+            document.getElementById('btnSave').hidden = true;
+            document.getElementById('btnCancel').hidden = true;
+            document.getElementById('btnApprove').hidden = true;
+            document.getElementById('btnPublishXHS').hidden = true;
+            document.getElementById('btnPublishZH').hidden = true;
+            loadContents();
+        }
+
+        async function approveContent() {
+            if (!currentContent) return;
+            await fetch(API + '/contents/' + currentContent.id, {
+                method: 'PUT', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({status: 'approved'}),
+            });
+            showToast('已定稿，可设置排期或立即发布', 'success');
+            document.getElementById('btnApprove').hidden = true;
+            document.getElementById('btnPublishXHS').hidden = !(currentContent.platform === 'xiaohongshu' || currentContent.platform === 'both');
+            document.getElementById('btnPublishZH').hidden = !(currentContent.platform === 'zhihu' || currentContent.platform === 'both');
+            currentContent.status = 'approved';
+            loadContents();
+        }
+
+        async function setSchedule() {
+            if (!currentContent) return;
+            const timeVal = document.getElementById('scheduleTime').value;
+            if (!timeVal) { showToast('请选择发布时间', 'error'); return; }
+
+            const scheduledAt = timeVal.replace('T', ' ') + ':00';
+            const res = await fetch(API + '/contents/' + currentContent.id + '/schedule', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({scheduled_at: scheduledAt}),
+            });
+            const data = await res.json();
+            if (data.code === 0) showToast(`已排期: ${scheduledAt}`, 'success');
+            currentContent.status = 'scheduled';
+            loadContents();
+        }
+
+        async function publishNow(platform) {
+            if (!currentContent) return;
+            if (!confirm(`确定要立即发布到${platform === 'xiaohongshu' ? '小红书' : '知乎'}吗？`)) return;
+
+            try {
+                const res = await fetch(API + '/contents/' + currentContent.id + '/publish', {method: 'POST'});
+                const data = await res.json();
+                if (data.code === 0) showToast('已提交发布任务', 'success');
+                else showToast(data.msg, 'error');
+            } catch(e) { showToast('发布失败', 'error'); }
+            setTimeout(loadContents, 3000);
+        }
+
+        async function publishItem(id, platform) {
+            if (!confirm(`确定发布 #${id} 吗？`)) return;
+            try {
+                await fetch(API + '/contents/' + id + '/publish', {method: 'POST'});
+                showToast('已提交发布', 'success');
+            } catch(e) { showToast('失败', 'error'); }
+            setTimeout(loadContents, 2000);
+        }
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tabPreview').hidden = tab !== 'preview';
+            document.getElementById('tabRaw').hidden = tab !== 'raw';
+        }
+
+        function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        function fmtDate(s) { return s ? s.substring(0, 10) : ''; }
+
+        function showToast(msg, type) {
+            const t = document.createElement('div');
+            t.className = 'toast toast-' + type;
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(() => t.remove(), 2800);
+        }
+    </script>
+</body>
+</html>

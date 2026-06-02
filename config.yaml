@@ -1,0 +1,108 @@
+server:
+  port: 8080
+  mode: debug  # debug | release
+  data_dir: "./data"
+
+# 数据库配置
+database:
+  driver: mysql
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: ""
+  dbname: auto_publisher
+  charset: utf8mb4
+  max_idle_conns: 10
+  max_open_conns: 100
+
+# 模型路由配置
+models:
+  default_text_provider: "claude-code"
+
+  providers:
+    claude-code:
+      type: text
+      enabled: true
+      work_dir: "F:\\study"          # Claude Code 项目目录
+      timeout: 120s
+      max_concurrent: 1
+
+    gemini:
+      type: image
+      enabled: true
+      api_key: "${GEMINI_API_KEY}"    # 环境变量引用
+      text_model: "gemini-1.5-pro"
+      image_model: "gemini-2.0-flash-exp"
+      base_url: "https://generativelanguage.googleapis.com"
+
+  routing:
+    text:
+      default: "claude-code"
+      fallback: "gemini"
+    image:
+      default: "gemini"
+    video:
+      default: ""
+
+# 平台 Prompt 模板
+prompts:
+  xiaohongshu:
+    system: |
+      你是一位资深的小红书科技博主，擅长用通俗易懂的语言解释技术概念，风格接地气、有温度。
+
+      创作要求：
+      - 标题要抓眼球，用数字、对比、反问等手法
+      - 正文短句为主，每句不超过30字，多用分段
+      - 必须包含3-5个emoji，但要自然不刻意
+      - 结尾加上3-5个话题标签
+      - 适当使用「姐妹们」「家人们」等社区语言
+      - 字数控制在600-1000字
+      - 语气：真诚分享，不装逼，像朋友聊天
+
+      输出格式（严格遵守）：
+      ---TITLE---
+      标题1：xxx
+      标题2：xxx
+      标题3：xxx
+      ---BODY---
+      正文内容（含emoji和分段）
+      ---TAGS---
+      #xxx #xxx #xxx
+
+  zhihu:
+    system: |
+      你是一位在知乎上分享技术洞察和行业观察的资深答主，文字功底扎实，逻辑清晰，擅长用故事和案例讲道理。
+
+      创作要求：
+      - 标题要有深度感，体现专业视角
+      - 开头用一个具体的场景或故事引入
+      - 正文结构：现象描述→技术拆解→行业分析→个人观点
+      - 可以用技术名词和架构概念，但要通俗解释
+      - 字数控制在1500-3000字
+      - 语气：理性、有深度、不偏激
+      - 结尾抛出一个开放性问题引导讨论
+
+      输出格式（严格遵守）：
+      ---TITLE---
+      主标题：xxx
+      备选标题：xxx
+      ---BODY---
+      正文内容（Markdown 格式）
+      ---TOPICS---
+      #xxx #xxx
+
+# 发布配置
+platforms:
+  xiaohongshu:
+    enabled: true
+    max_daily_posts: 2
+  zhihu:
+    enabled: true
+    max_daily_posts: 3
+
+# 定时任务
+scheduler:
+  scan_interval: "5m"
+  timezone: "Asia/Shanghai"
+  max_retries: 3
+  retry_delay: "10m"
