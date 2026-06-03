@@ -1,3 +1,5 @@
+// Package config provides configuration loading and management for the auto-publisher.
+// It supports YAML config files with environment variable interpolation and .env file loading.
 package config
 
 import (
@@ -5,12 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
-// Config 全局配置
+// Config is the top-level application configuration.
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Database  DatabaseConfig  `yaml:"database"`
@@ -20,19 +23,19 @@ type Config struct {
 	Scheduler SchedulerConfig `yaml:"scheduler"`
 }
 
-// ServerConfig 服务器配置
+// ServerConfig holds HTTP server and data directory settings.
 type ServerConfig struct {
 	Port    int    `yaml:"port"`
-	Mode    string `yaml:"mode"`
-	DataDir string `yaml:"data_dir"`
+	Mode    string `yaml:"mode"`     // debug | release
+	DataDir string `yaml:"data_dir"` // data storage root directory
 }
 
-// IsDebug 是否调试模式
+// IsDebug reports whether the server is running in debug mode.
 func (s *ServerConfig) IsDebug() bool {
 	return s.Mode == "debug"
 }
 
-// DatabaseConfig 数据库配置
+// DatabaseConfig holds MySQL connection settings.
 type DatabaseConfig struct {
 	Driver       string `yaml:"driver"`
 	Host         string `yaml:"host"`
@@ -45,33 +48,33 @@ type DatabaseConfig struct {
 	MaxOpenConns int    `yaml:"max_open_conns"`
 }
 
-// DSN 返回 MySQL 连接字符串
+// DSN returns the MySQL Data Source Name connection string.
 func (d *DatabaseConfig) DSN() string {
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local",
 		d.User, d.Password, d.Host, d.Port, d.DBName, d.Charset)
 }
 
-// ModelsConfig 模型路由配置
+// ModelsConfig holds AI model provider routing configuration.
 type ModelsConfig struct {
 	DefaultTextProvider string             `yaml:"default_text_provider"`
 	Providers           map[string]Provider `yaml:"providers"`
 	Routing             RoutingConfig      `yaml:"routing"`
 }
 
-// Provider 单个 AI Provider 配置
+// Provider holds configuration for a single AI provider.
 type Provider struct {
-	Type           string `yaml:"type"`            // text / image / video
-	Enabled        bool   `yaml:"enabled"`
-	WorkDir        string `yaml:"work_dir,omitempty"`
-	Timeout        string `yaml:"timeout,omitempty"`
-	MaxConcurrent  int    `yaml:"max_concurrent,omitempty"`
-	APIKey         string `yaml:"api_key,omitempty"`
-	TextModel      string `yaml:"text_model,omitempty"`
-	ImageModel     string `yaml:"image_model,omitempty"`
-	BaseURL        string `yaml:"base_url,omitempty"`
+	Type          string `yaml:"type"` // text / image / video
+	Enabled       bool   `yaml:"enabled"`
+	WorkDir       string `yaml:"work_dir,omitempty"`
+	Timeout       string `yaml:"timeout,omitempty"`
+	MaxConcurrent int    `yaml:"max_concurrent,omitempty"`
+	APIKey        string `yaml:"api_key,omitempty"`
+	TextModel     string `yaml:"text_model,omitempty"`
+	ImageModel    string `yaml:"image_model,omitempty"`
+	BaseURL       string `yaml:"base_url,omitempty"`
 }
 
-// GetAPIKey 获取 API Key，支持 ${ENV_VAR} 格式的环境变量引用
+// GetAPIKey resolves the API key, supporting ${ENV_VAR} environment variable references.
 func (p *Provider) GetAPIKey() string {
 	key := strings.TrimSpace(p.APIKey)
 	if strings.HasPrefix(key, "${") && strings.HasSuffix(key, "}") {
@@ -81,76 +84,125 @@ func (p *Provider) GetAPIKey() string {
 	return key
 }
 
-// RoutingConfig 路由规则配置
+// RoutingConfig defines model routing rules per content type.
 type RoutingConfig struct {
 	Text  RouteRule `yaml:"text"`
 	Image RouteRule `yaml:"image"`
 	Video RouteRule `yaml:"video"`
 }
 
-// RouteRule 单条路由规则
+// RouteRule specifies a default provider and an optional fallback.
 type RouteRule struct {
 	Default  string `yaml:"default"`
 	Fallback string `yaml:"fallback"`
 }
 
-// PromptsConfig Prompt 模板配置
+// PromptsConfig holds platform-specific prompt templates (fallback if prompt files missing).
 type PromptsConfig struct {
 	Xiaohongshu PlatformPromptConfig `yaml:"xiaohongshu"`
 	Zhihu       PlatformPromptConfig `yaml:"zhihu"`
 }
 
-// PlatformPromptConfig 平台 Prompt 配置
+// PlatformPromptConfig holds the system prompt for a platform.
 type PlatformPromptConfig struct {
 	System string `yaml:"system"`
 }
 
-// PlatformsConfig 平台发布配置
+// PlatformsConfig holds publishing configuration for all platforms.
 type PlatformsConfig struct {
 	Xiaohongshu PlatformPubConfig `yaml:"xiaohongshu"`
 	Zhihu       PlatformPubConfig `yaml:"zhihu"`
 }
 
-// PlatformPubConfig 单个平台的发布配置
+// PlatformPubConfig holds publishing settings for a single platform.
 type PlatformPubConfig struct {
-	Enabled       bool `yaml:"enabled"`
-	MaxDailyPosts int  `yaml:"max_daily_posts"`
+	Enabled       bool   `yaml:"enabled"`
+	MaxDailyPosts int    `yaml:"max_daily_posts"`
+	Username      string `yaml:"username"` // login username (replaces manual cookie)
+	Password      string `yaml:"password"` // login password (replaces manual cookie)
 }
 
-// SchedulerConfig 调度配置
+// HasCredentials reports whether username and password are both configured.
+func (p *PlatformPubConfig) HasCredentials() bool {
+	return p.Username != "" && p.Password != ""
+}
+
+// ResolveCredentials resolves credential fields that may reference environment variables.
+// Returns resolved username and password.
+func (p *PlatformPubConfig) ResolveCredentials() (username, password string) {
+	username = p.Username
+	password = p.Password
+
+	// Support ${ENV_VAR} syntax in username/password
+	if strings.HasPrefix(username, "${") && strings.HasSuffix(username, "}") {
+		username = os.Getenv(username[2 : len(username)-1])
+	}
+	if strings.HasPrefix(password, "${") && strings.HasSuffix(password, "}") {
+		password = os.Getenv(password[2 : len(password)-1])
+	}
+	return username, password
+}
+
+// SchedulerConfig holds the scheduling configuration.
 type SchedulerConfig struct {
-	ScanInterval string `yaml:"scan_interval"`
-	Timezone     string `yaml:"timezone"`
+	ScanInterval string `yaml:"scan_interval"` // e.g. "5m"
+	Timezone     string `yaml:"timezone"`      // e.g. "Asia/Shanghai"
 	MaxRetries   int    `yaml:"max_retries"`
-	RetryDelay   string `yaml:"retry_delay"`
+	RetryDelay   string `yaml:"retry_delay"` // e.g. "10m"
 }
 
-// Load 加载配置文件（自动加载同目录下的 .env 文件）
+// ScanIntervalDuration parses and returns the scan interval as a time.Duration.
+// Defaults to 5 minutes if parsing fails.
+func (s *SchedulerConfig) ScanIntervalDuration() time.Duration {
+	if s.ScanInterval == "" {
+		return 5 * time.Minute
+	}
+	d, err := time.ParseDuration(s.ScanInterval)
+	if err != nil {
+		return 5 * time.Minute
+	}
+	return d
+}
+
+// RetryDelayDuration parses and returns the retry delay as a time.Duration.
+// Defaults to 10 minutes if parsing fails.
+func (s *SchedulerConfig) RetryDelayDuration() time.Duration {
+	if s.RetryDelay == "" {
+		return 10 * time.Minute
+	}
+	d, err := time.ParseDuration(s.RetryDelay)
+	if err != nil {
+		return 10 * time.Minute
+	}
+	return d
+}
+
+// Load reads and parses the config file at path, automatically loading .env files.
 func Load(path string) (*Config, error) {
-	// 尝试加载 .env 文件（config.yaml 同目录）
+	// Load .env from config file directory
 	configDir := filepath.Dir(path)
 	envFile := filepath.Join(configDir, ".env")
 	if _, err := os.Stat(envFile); err == nil {
 		if err := godotenv.Load(envFile); err != nil {
-			return nil, fmt.Errorf("加载 .env 文件失败: %w", err)
+			return nil, fmt.Errorf("load .env file: %w", err)
 		}
 	}
-	// 同时尝试当前工作目录的 .env
+	// Also try .env in current working directory
 	if _, err := os.Stat(".env"); err == nil {
-		godotenv.Load(".env")
+		_ = godotenv.Load(".env")
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("读取配置文件失败: %w", err)
+		return nil, fmt.Errorf("read config file: %w", err)
 	}
 
 	cfg := &Config{}
 	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("解析配置文件失败: %w", err)
+		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 
-	// 环境变量覆盖数据库配置
+	// Environment variable overrides for database
 	if v := os.Getenv("DB_PASSWORD"); v != "" {
 		cfg.Database.Password = v
 	}
@@ -161,13 +213,12 @@ func Load(path string) (*Config, error) {
 		cfg.Database.Host = v
 	}
 
-	// 设置默认值
 	cfg.applyDefaults()
 
 	return cfg, nil
 }
 
-// applyDefaults 应用默认值
+// applyDefaults sets default values for optional configuration fields.
 func (c *Config) applyDefaults() {
 	if c.Server.Port == 0 {
 		c.Server.Port = 8080
@@ -183,7 +234,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// GetTextProvider 获取文字生成 Provider 名称
+// GetTextProvider returns the configured default text generation provider name.
 func (c *Config) GetTextProvider() string {
 	if c.Models.Routing.Text.Default != "" {
 		return c.Models.Routing.Text.Default
@@ -191,18 +242,23 @@ func (c *Config) GetTextProvider() string {
 	return c.Models.DefaultTextProvider
 }
 
-// GetTextFallback 获取文字降级 Provider 名称
+// GetTextFallback returns the fallback text generation provider name.
 func (c *Config) GetTextFallback() string {
 	return c.Models.Routing.Text.Fallback
 }
 
-// GetImageProvider 获取图片生成 Provider 名称
+// GetImageProvider returns the configured image generation provider name.
 func (c *Config) GetImageProvider() string {
 	return c.Models.Routing.Image.Default
 }
 
-// GetProvider 按名称获取 Provider 配置
+// GetProvider returns the provider configuration by name.
 func (c *Config) GetProvider(name string) (*Provider, bool) {
 	p, ok := c.Models.Providers[name]
 	return &p, ok
+}
+
+// CookieDir returns the directory path for cached cookie files.
+func (c *Config) CookieDir() string {
+	return filepath.Join(c.Server.DataDir, "cookies")
 }

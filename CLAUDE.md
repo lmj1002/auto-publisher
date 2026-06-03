@@ -23,8 +23,9 @@
 | 配置 | YAML + .env | config.yaml 定义结构，.env 存密钥 |
 | AI 文字 | Claude Code CLI (`os/exec`) | 子进程调用本地 `claude` 命令 |
 | AI 图片 | Google Gemini API | 封面图生成 |
-| 浏览器自动化 | go-rod/rod | 小红书发布 |
+| 浏览器自动化 | go-rod/rod | 小红书发布 + 内容采集 |
 | 定时调度 | 标准库 `time.Ticker` | 扫描排期表，到点触发发布 |
+| 日志 | `log/slog` | Go 标准库结构化日志 |
 | 前端 | Go template + 原生 JS | 极简管理页面 |
 
 ---
@@ -33,11 +34,13 @@
 
 ```
 auto-publisher/
-├── cmd/server/main.go                   # 入口：DB → Providers → Publishers → Scheduler → Gin
+├── cmd/server/main.go                   # 入口：DB → Providers → Publishers → Scheduler → Collectors → Gin
 ├── internal/
-│   ├── config/config.go                 # YAML配置 + .env自动加载 + 多模型路由
-│   ├── model/content.go                 # GORM 模型 + 状态枚举 + DTO
-│   ├── handler/content.go               # HTTP API：CRUD + AI生成 + 排期
+│   ├── config/config.go                 # YAML配置 + .env自动加载 + 多模型路由 + 账号密码解析
+│   ├── model/content.go                 # GORM 模型 + 状态枚举 + DTO + 采集内容模型
+│   ├── handler/
+│   │   ├── content.go                   # HTTP API：CRUD + AI生成 + 排期
+│   │   └── collection.go               # 内容采集 API：搜索 → 评分 → 存储
 │   ├── provider/                        # AI 能力层
 │   │   ├── provider.go                  # AIProvider 统一接口
 │   │   ├── claude_code.go               # ClaudeCodeProvider：os/exec 调 claude CLI
@@ -46,8 +49,14 @@ auto-publisher/
 │   │   └── prompt_manager.go            # Prompt模板管理（加载/渲染/热更新）
 │   ├── publisher/                       # 平台发布层
 │   │   ├── publisher.go                 # Publisher 统一接口
-│   │   ├── zhihu.go                     # 知乎：Cookie鉴权 + HTTP API 发布
-│   │   └── xiaohongshu.go              # 小红书：Rod 浏览器自动化发布
+│   │   ├── cookiemanager.go             # CookieManager：自动登录 + Cookie缓存 + 自动刷新
+│   │   ├── zhihu.go                     # 知乎：账号密码登录 + Cookie鉴权 + HTTP API 发布
+│   │   └── xiaohongshu.go              # 小红书：账号密码登录 + Rod 浏览器自动化发布
+│   ├── collector/                       # 内容采集层（NEW）
+│   │   ├── collector.go                 # Collector 统一接口 + SimilarityScorer
+│   │   ├── zhihu.go                     # 知乎内容搜索（HTTP API）
+│   │   ├── xiaohongshu.go              # 小红书内容搜索（Rod 浏览器自动化）
+│   │   └── similarity.go               # 关键词匹配 + 相关度评分算法
 │   └── scheduler/
 │       └── scheduler.go                 # 轻量定时调度器（扫描+重试+截图）
 ├── prompts/                             # Prompt 模板（.md文件，支持Go template）
@@ -69,7 +78,7 @@ auto-publisher/
 ```bash
 # 1. 环境配置
 cp .env.example .env
-# 编辑 .env 填入 GEMINI_API_KEY, ZHIHU_COOKIE, XHS_COOKIE
+# 编辑 .env 填入 GEMINI_API_KEY 等
 
 # 2. 数据库
 mysql -u root -e "CREATE DATABASE IF NOT EXISTS auto_publisher DEFAULT CHARSET utf8mb4"
@@ -96,7 +105,9 @@ go build -o auto-publisher.exe ./cmd/server/
 | POST | `/api/generate/draft-with-image` | AI 生成文字 + 封面图 |
 | POST | `/api/contents/:id/schedule` | 设置定时发布 |
 | POST | `/api/contents/:id/publish` | 立即发布 |
-| GET | `/api/status` | Provider + Publisher 在线状态 |
+| POST | `/api/collect` | 采集相似内容（NEW） |
+| GET | `/api/collected` | 查看已采集内容（NEW） |
+| GET | `/api/status` | Provider + Publisher + Collector 在线状态 |
 
 ---
 
@@ -113,6 +124,19 @@ video →（预留）
 ```
 
 路由规则在 `config.yaml` → `models.routing` 中配置。
+
+### Cookie 自动管理（v2.0 NEW）
+
+支持两种 Cookie 获取方式（优先级从高到低）：
+
+1. **账号密码自动登录（推荐）** — 在 `config.yaml` 配置 `username` / `password`，系统自动登录并缓存 Cookie
+2. **手动 Cookie 字符串（备用）** — 通过环境变量 `XHS_COOKIE` / `ZHIHU_COOKIE` 或 `.cookie` 文件
+
+Cookie 管理特性：
+- 自动缓存到 `data/cookies/` 目录，重启无需重新登录
+- 内存缓存 1 小时，磁盘缓存 7 天
+- 登录态失效时自动 invalidate 并重试登录
+- 线程安全的读写锁保护
 
 ### Claude Code CLI 调用
 
@@ -138,6 +162,19 @@ draft → ai_generated → review → approved → scheduled → published
                                                   failed →（重试）
 ```
 
+### 内容采集（v2.0 NEW）
+
+发布前可搜索平台上的类似内容，基于关键字进行相关度评分：
+
+```
+AI 生成内容 → 提取关键字 → 搜索平台 → 相关度评分 → 存储参考
+```
+
+- **知乎采集**：通过搜索 API 查找文章/回答，关键字匹配评分
+- **小红书采集**：通过浏览器自动化搜索笔记，提取标题/作者/点赞数
+- **评分算法**：精确匹配 1.0，部分匹配 0.5，归一化到 [0.0, 1.0]
+- 采集结果按相关度排序，关联到原始内容 ID
+
 ### Prompt 管理
 
 - `PromptManager` 从 `prompts/` 加载 `.md` 模板
@@ -149,8 +186,8 @@ draft → ai_generated → review → approved → scheduled → published
 
 | 平台 | 方式 | 关键点 |
 |------|------|--------|
-| 知乎 | Cookie + HTTP API | 创建草稿 → 发布文章/想法 |
-| 小红书 | Rod 浏览器自动化 | 启动Chrome → 注入Cookie → 填写表单 → 上传图片 → 发布 → 截图 |
+| 知乎 | Cookie + HTTP API | 支持账号密码自动登录 / Cookie 鉴权，创建草稿 → 发布文章/想法 |
+| 小红书 | Rod 浏览器自动化 | 支持账号密码自动登录 / Cookie 注入，启动Chrome → 填写表单 → 上传图片 → 发布 → 截图 |
 
 ### 调度器
 
@@ -158,6 +195,48 @@ draft → ai_generated → review → approved → scheduled → published
 - 启动时和每 N 分钟扫描排期表
 - 发布失败自动重试（可配置次数和间隔）
 - 小红书发布自动截图留存
+
+---
+
+## Go 开发规范（v2.0）
+
+本项目遵循以下 Go 最佳实践：
+
+### 日志
+
+- 使用标准库 `log/slog` 进行结构化日志
+- 日志级别：`Debug`（开发调试）、`Info`（正常流程）、`Warn`（可恢复异常）、`Error`（需关注错误）
+- 使用 `LOG_LEVEL=debug` 环境变量切换调试模式
+
+### 错误处理
+
+- 使用 `fmt.Errorf("...: %w", err)` 进行错误包装，保留调用链
+- 公开 API 返回明确的错误消息，避免暴露内部细节
+- 关键操作（登录、发布）失败时记录完整上下文
+
+### 并发
+
+- 所有共享状态使用 `sync.Mutex` / `sync.RWMutex` 保护
+- Claude CLI 调用使用全局互斥锁（不可移除）
+- CookieManager 使用读写锁优化读多写少场景
+
+### 接口设计
+
+- 核心抽象：`AIProvider`、`Publisher`、`Collector`、`SimilarityScorer`
+- 接口小而专注（ISP 原则），每个接口只包含必要方法
+- 使用函数式选项模式（Functional Options）进行灵活配置
+
+### 配置管理
+
+- YAML 结构体标签严格对应配置字段
+- 支持 `${ENV_VAR}` 环境变量插值
+- `.env` 文件不提交 Git，`.env.example` 提供模板
+
+### 代码组织
+
+- 标准 Go 项目布局：`cmd/` 入口，`internal/` 内部包
+- 每个包职责单一，包名反映功能
+- 导出符号均有 godoc 注释
 
 ---
 
@@ -169,6 +248,7 @@ draft → ai_generated → review → approved → scheduled → published
 
 - `.env` 不提交 Git
 - 密钥（API Key、Cookie）一律走环境变量
+- 账号密码推荐使用 `${VAR}` 引用环境变量
 
 ---
 
@@ -190,5 +270,6 @@ go test ./... -v
 - **Claude Code CLI 并发控制** — 全局锁不可移除
 - **模型切换** — 改 `config.yaml` routing 即可，Provider 代码不变
 - **小红书反爬** — 浏览器自动化频率控制在每天 1-2 条
-- **Cookie 过期** — 知乎/小红书 Cookie 失效时需手动更新 `.env` 或 `.cookie` 文件
+- **Cookie 管理** — 推荐使用账号密码自动登录，Cookie 自动缓存到 `data/cookies/`，7天过期
+- **内容采集** — 知乎采集需要登录 Cookie，小红书采集需要浏览器
 - **先跑内容再跑系统** — 写代码前先用 Claude Code 手动生成内容测试方向

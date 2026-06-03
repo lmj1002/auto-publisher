@@ -96,9 +96,17 @@ platforms:
   xiaohongshu:
     enabled: true
     max_daily_posts: 2
+    # 账号密码登录（推荐，替代手动复制Cookie）
+    # 支持 ${ENV_VAR} 环境变量引用，如 username: "${XHS_USERNAME}"
+    username: ""
+    password: ""
   zhihu:
     enabled: true
     max_daily_posts: 3
+    # 账号密码登录（推荐，替代手动复制Cookie）
+    # 支持 ${ENV_VAR} 环境变量引用
+    username: ""
+    password: ""
 
 # 定时任务
 scheduler:

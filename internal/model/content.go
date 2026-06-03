@@ -125,3 +125,42 @@ type AIOptions struct {
 	Topic       string      `json:"topic"`
 	KeyPoints   string      `json:"key_points"`
 }
+
+// ==================== 内容采集 ====================
+
+// CollectedContent 采集的外部内容参考
+type CollectedContent struct {
+	ID              int64     `gorm:"primaryKey;autoIncrement" json:"id"`
+	Platform        Platform  `gorm:"type:varchar(20);not null;index;comment:来源平台" json:"platform"`
+	SourceURL       string    `gorm:"type:varchar(1000);not null;comment:原文链接" json:"source_url"`
+	Title           string    `gorm:"type:varchar(500);comment:原文标题" json:"title"`
+	Author          string    `gorm:"type:varchar(100);comment:作者" json:"author"`
+	Summary         string    `gorm:"type:text;comment:内容摘要" json:"summary"`
+	Keywords        string    `gorm:"type:varchar(500);comment:匹配关键字" json:"keywords"`
+	RelevanceScore  float64   `gorm:"default:0;comment:相关度评分" json:"relevance_score"`
+	Likes           int       `gorm:"default:0;comment:点赞数" json:"likes"`
+	Comments        int       `gorm:"default:0;comment:评论数" json:"comments"`
+	SourceContentID int64     `gorm:"index;comment:关联的原始内容ID" json:"source_content_id"`
+	SyncedAt        time.Time `gorm:"autoCreateTime;comment:采集时间" json:"synced_at"`
+	CreatedAt       time.Time `gorm:"autoCreateTime" json:"created_at"`
+}
+
+// TableName specifies the table name for CollectedContent.
+func (CollectedContent) TableName() string {
+	return "collected_contents"
+}
+
+// CollectRequest 内容采集请求
+type CollectRequest struct {
+	ContentID int64  `json:"content_id" binding:"required"` // 关联的原始内容ID
+	Platform  Platform `json:"platform"`                     // 限定平台，空=全部
+	MaxResults int    `json:"max_results"`                   // 最大结果数，默认10
+}
+
+// CollectResponse 内容采集响应
+type CollectResponse struct {
+	ContentID int64              `json:"content_id"`
+	Results   []CollectedContent `json:"results"`
+	Total     int                `json:"total"`
+	Keywords  []string           `json:"keywords"` // 用于搜索的关键字
+}

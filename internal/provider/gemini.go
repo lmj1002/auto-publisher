@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,7 +17,8 @@ import (
 	"auto-publisher/internal/model"
 )
 
-// GeminiProvider Gemini Provider（支持图片生成 + 文字降级）
+// GeminiProvider generates text and images via the Google Gemini API.
+// It is the primary image generator and serves as a text fallback when Claude Code is unavailable.
 type GeminiProvider struct {
 	apiKey     string
 	baseURL    string
@@ -26,7 +28,7 @@ type GeminiProvider struct {
 	imageDir   string
 }
 
-// NewGeminiProvider 创建 Gemini Provider
+// NewGeminiProvider creates a Gemini API provider.
 func NewGeminiProvider(cfg *config.Provider, imageDir string) *GeminiProvider {
 	return &GeminiProvider{
 		apiKey:     cfg.GetAPIKey(),
@@ -38,22 +40,22 @@ func NewGeminiProvider(cfg *config.Provider, imageDir string) *GeminiProvider {
 	}
 }
 
-// Name 返回名称
+// Name returns the provider identifier.
 func (p *GeminiProvider) Name() string {
 	return "gemini"
 }
 
-// Type 返回 AI 类型（主类型为 image，也可做 text 降级）
+// Type returns ProviderImage (primary capability is image generation).
 func (p *GeminiProvider) Type() ProviderType {
 	return ProviderImage
 }
 
-// IsAvailable 检查 Gemini API 是否可用
+// IsAvailable checks if the API key is configured.
 func (p *GeminiProvider) IsAvailable(ctx context.Context) bool {
 	return p.apiKey != ""
 }
 
-// Generate 生成内容（根据 TaskType 路由到文字或图片生成）
+// Generate routes to text or image generation based on request TaskType.
 func (p *GeminiProvider) Generate(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
 	switch req.TaskType {
 	case ProviderImage:
@@ -61,41 +63,33 @@ func (p *GeminiProvider) Generate(ctx context.Context, req *GenerateRequest) (*G
 	case ProviderText:
 		return p.generateText(ctx, req)
 	default:
-		return nil, fmt.Errorf("gemini 不支持的任务类型: %s", req.TaskType)
+		return nil, fmt.Errorf("gemini: unsupported task type: %s", req.TaskType)
 	}
 }
 
-// GenerateText 作为文字 Provider 降级使用
-func (p *GeminiProvider) GenerateText(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
-	return p.generateText(ctx, req)
-}
-
-// generateText 调用 Gemini 生成文字
+// generateText calls the Gemini API for text generation (fallback mode).
 func (p *GeminiProvider) generateText(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
 	start := time.Now()
 
 	fullPrompt := req.SystemPrompt + "\n\n## 选题\n" + req.UserPrompt
+	slog.Debug("gemini text generate start", "prompt_len", len(fullPrompt))
 
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]interface{}{
-					{"text": fullPrompt},
-				},
-			},
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{"parts": []map[string]any{{"text": fullPrompt}}},
 		},
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"temperature":     0.7,
 			"maxOutputTokens": 4096,
 		},
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
+	apiURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
 		p.baseURL, p.textModel, p.apiKey)
 
-	respBody, err := p.doRequest(ctx, url, payload)
+	respBody, err := p.doRequest(ctx, apiURL, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gemini text: %w", err)
 	}
 
 	text := extractTextFromGeminiResponse(respBody)
@@ -108,47 +102,48 @@ func (p *GeminiProvider) generateText(ctx context.Context, req *GenerateRequest)
 	}, nil
 }
 
-// generateImage 调用 Gemini 生成图片
+// generateImage calls the Gemini API for image generation.
 func (p *GeminiProvider) generateImage(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error) {
 	start := time.Now()
 
-	// 构建图片生成 Prompt（中英混合描述更稳定）
 	imagePrompt := buildImagePrompt(req)
-
 	aspectRatio := req.ImageAspectRatio
 	if aspectRatio == "" {
-		aspectRatio = "3:4" // 默认小红书封面比例
+		aspectRatio = "3:4" // Default Xiaohongshu cover ratio
 	}
 
-	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]interface{}{
-					{"text": imagePrompt},
-				},
-			},
+	slog.Debug("gemini image generate start",
+		"aspect_ratio", aspectRatio,
+		"prompt_len", len(imagePrompt),
+	)
+
+	payload := map[string]any{
+		"contents": []map[string]any{
+			{"parts": []map[string]any{{"text": imagePrompt}}},
 		},
-		"generationConfig": map[string]interface{}{
+		"generationConfig": map[string]any{
 			"responseModalities": []string{"TEXT", "IMAGE"},
-			"imageConfig": map[string]interface{}{
+			"imageConfig": map[string]any{
 				"aspectRatio": aspectRatio,
 			},
 		},
 	}
 
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
+	apiURL := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
 		p.baseURL, p.imageModel, p.apiKey)
 
-	respBody, err := p.doRequest(ctx, url, payload)
+	respBody, err := p.doRequest(ctx, apiURL, payload)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("gemini image: %w", err)
 	}
 
-	// 提取图片数据
 	images := extractImagesFromGeminiResponse(respBody, p.imageDir)
-
-	// 提取文字说明
 	text := extractTextFromGeminiResponse(respBody)
+
+	slog.Info("gemini image generated",
+		"count", len(images),
+		"duration", time.Since(start),
+	)
 
 	return &GenerateResponse{
 		Text:     text,
@@ -158,43 +153,44 @@ func (p *GeminiProvider) generateImage(ctx context.Context, req *GenerateRequest
 	}, nil
 }
 
-// doRequest 执行 HTTP 请求
-func (p *GeminiProvider) doRequest(ctx context.Context, url string, payload interface{}) (map[string]interface{}, error) {
+// doRequest performs an HTTP POST request to the Gemini API.
+func (p *GeminiProvider) doRequest(ctx context.Context, apiURL string, payload any) (map[string]any, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return nil, fmt.Errorf("序列化请求失败: %w", err)
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("请求 Gemini API 失败: %w", err)
+		return nil, fmt.Errorf("gemini API request: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBytes, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
+		return nil, fmt.Errorf("read response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Gemini API 返回错误 (%d): %s", resp.StatusCode, string(respBytes))
+		return nil, fmt.Errorf("gemini API error (HTTP %d): %s",
+			resp.StatusCode, string(respBytes))
 	}
 
-	var result map[string]interface{}
+	var result map[string]any
 	if err := json.Unmarshal(respBytes, &result); err != nil {
-		return nil, fmt.Errorf("解析响应失败: %w", err)
+		return nil, fmt.Errorf("parse response: %w", err)
 	}
 
 	return result, nil
 }
 
-// buildImagePrompt 构建图片生成 Prompt
+// buildImagePrompt constructs an image generation prompt from the request.
 func buildImagePrompt(req *GenerateRequest) string {
 	style := req.ImageStyle
 	if style == "" {
@@ -211,45 +207,46 @@ func buildImagePrompt(req *GenerateRequest) string {
 		aspectDesc = "portrait"
 	}
 
+	platformNames := map[model.Platform]string{
+		model.PlatformXiaohongshu: "Xiaohongshu (RED)",
+		model.PlatformZhihu:       "Zhihu (Chinese Quora)",
+		model.PlatformBoth:        "social media",
+	}
+
 	return fmt.Sprintf(
 		"Generate a cover image for a social media post about: %s. "+
 			"The image should be %s, %s aspect ratio. "+
 			"Suitable for %s platform. "+
 			"No text in the image. Simple and eye-catching.",
-		req.UserPrompt, style, aspectDesc,
-		map[model.Platform]string{
-			model.PlatformXiaohongshu: "Xiaohongshu (RED)",
-			model.PlatformZhihu:       "Zhihu (Chinese Quora)",
-			model.PlatformBoth:        "social media",
-		}[req.Platform],
+		req.UserPrompt, style, aspectDesc, platformNames[req.Platform],
 	)
 }
 
-// extractTextFromGeminiResponse 从 Gemini 响应中提取文字
-func extractTextFromGeminiResponse(resp map[string]interface{}) string {
-	candidates, ok := resp["candidates"].([]interface{})
+// extractTextFromGeminiResponse extracts text parts from a Gemini API response.
+func extractTextFromGeminiResponse(resp map[string]any) string {
+	candidates, ok := resp["candidates"].([]any)
 	if !ok || len(candidates) == 0 {
 		return ""
 	}
 
-	candidate, ok := candidates[0].(map[string]interface{})
+	candidate, ok := candidates[0].(map[string]any)
 	if !ok {
 		return ""
 	}
 
-	content, ok := candidate["content"].(map[string]interface{})
+	content, ok := candidate["content"].(map[string]any)
 	if !ok {
 		return ""
 	}
 
-	parts, ok := content["parts"].([]interface{})
+	parts, ok := content["parts"].([]any)
 	if !ok {
 		return ""
 	}
 
 	var textParts []string
 	for _, part := range parts {
-		p, ok := part.(map[string]interface{})
+		p, ok := part.(map[string]any)
 		if !ok {
 			continue
 		}
@@ -258,39 +255,38 @@ func extractTextFromGeminiResponse(resp map[string]interface{}) string {
 		}
 	}
 
-	return bytes.NewBufferString(stringsJoin(textParts, "\n")).String()
+	return joinStrings(textParts, "\n")
 }
 
-// extractImagesFromGeminiResponse 从 Gemini 响应中提取图片
-func extractImagesFromGeminiResponse(resp map[string]interface{}, imageDir string) []ImageResult {
+// extractImagesFromGeminiResponse extracts inline images from a Gemini API response.
+func extractImagesFromGeminiResponse(resp map[string]any, imageDir string) []ImageResult {
 	var images []ImageResult
 
-	candidates, ok := resp["candidates"].([]interface{})
+	candidates, ok := resp["candidates"].([]any)
 	if !ok {
 		return images
 	}
 
 	for _, c := range candidates {
-		candidate, ok := c.(map[string]interface{})
+		candidate, ok := c.(map[string]any)
 		if !ok {
 			continue
 		}
-		content, ok := candidate["content"].(map[string]interface{})
+		content, ok := candidate["content"].(map[string]any)
 		if !ok {
 			continue
 		}
-		parts, ok := content["parts"].([]interface{})
+		parts, ok := content["parts"].([]any)
 		if !ok {
 			continue
 		}
 
 		for i, part := range parts {
-			p, ok := part.(map[string]interface{})
+			p, ok := part.(map[string]any)
 			if !ok {
 				continue
 			}
-			// Gemini 返回 inlineData 格式
-			inlineData, ok := p["inlineData"].(map[string]interface{})
+			inlineData, ok := p["inlineData"].(map[string]any)
 			if !ok {
 				continue
 			}
@@ -301,13 +297,12 @@ func extractImagesFromGeminiResponse(resp map[string]interface{}, imageDir strin
 				continue
 			}
 
-			// Base64 解码
 			imgData, err := base64.StdEncoding.DecodeString(data)
 			if err != nil {
 				continue
 			}
 
-			// 确定文件格式
+			// Determine file format
 			format := "png"
 			switch mimeType {
 			case "image/jpeg":
@@ -316,10 +311,17 @@ func extractImagesFromGeminiResponse(resp map[string]interface{}, imageDir strin
 				format = "webp"
 			}
 
-			// 保存到本地
-			os.MkdirAll(imageDir, 0755)
-			filename := filepath.Join(imageDir, fmt.Sprintf("gemini_%d_%d.%s", time.Now().Unix(), i, format))
-			os.WriteFile(filename, imgData, 0644)
+			// Save to disk
+			if err := os.MkdirAll(imageDir, 0755); err != nil {
+				slog.Warn("create image dir failed", "path", imageDir, "error", err)
+				continue
+			}
+			filename := filepath.Join(imageDir,
+				fmt.Sprintf("gemini_%d_%d.%s", time.Now().Unix(), i, format))
+			if err := os.WriteFile(filename, imgData, 0644); err != nil {
+				slog.Warn("save image failed", "path", filename, "error", err)
+				continue
+			}
 
 			images = append(images, ImageResult{
 				Data:     imgData,
@@ -333,8 +335,8 @@ func extractImagesFromGeminiResponse(resp map[string]interface{}, imageDir strin
 	return images
 }
 
-// stringsJoin 简单的字符串拼接（避免引入额外依赖）
-func stringsJoin(parts []string, sep string) string {
+// joinStrings concatenates strings with a separator.
+func joinStrings(parts []string, sep string) string {
 	if len(parts) == 0 {
 		return ""
 	}

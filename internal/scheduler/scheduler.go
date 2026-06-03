@@ -1,9 +1,12 @@
+// Package scheduler provides a lightweight, timer-based publication scheduler.
+// It scans the database for scheduled content and dispatches it to the appropriate
+// platform publisher with configurable retry logic.
 package scheduler
 
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -13,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Scheduler 定时调度器
+// Scheduler periodically scans for scheduled content and triggers publishing.
 type Scheduler struct {
 	db         *gorm.DB
 	publishers map[string]publisher.Publisher
@@ -26,7 +29,8 @@ type Scheduler struct {
 	wg     sync.WaitGroup
 }
 
-// New 创建调度器
+// New creates a new Scheduler with the given configuration.
+// timezone should be an IANA timezone name (e.g., "Asia/Shanghai").
 func New(db *gorm.DB, interval time.Duration, maxRetries int, retryDelay time.Duration, timezone string) (*Scheduler, error) {
 	loc, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -44,34 +48,34 @@ func New(db *gorm.DB, interval time.Duration, maxRetries int, retryDelay time.Du
 	}, nil
 }
 
-// Register 注册发布器
+// Register adds a publisher to the scheduler by name.
 func (s *Scheduler) Register(name string, p publisher.Publisher) {
 	s.publishers[name] = p
-	log.Printf("[Scheduler] 注册发布器: %s (%s)", name, p.Platform())
+	slog.Info("publisher registered with scheduler", "name", name, "platform", p.Platform())
 }
 
-// Start 启动调度器
+// Start begins the scheduling loop in a background goroutine.
 func (s *Scheduler) Start() {
 	s.wg.Add(1)
 	go s.loop()
-	log.Printf("[Scheduler] 调度器已启动，扫描间隔: %v，时区: %s", s.interval, s.timezone)
+	slog.Info("scheduler started", "interval", s.interval, "timezone", s.timezone)
 }
 
-// Stop 停止调度器
+// Stop gracefully stops the scheduling loop.
 func (s *Scheduler) Stop() {
 	close(s.stopCh)
 	s.wg.Wait()
-	log.Println("[Scheduler] 调度器已停止")
+	slog.Info("scheduler stopped")
 }
 
-// loop 主循环
+// loop is the main scheduling loop.
 func (s *Scheduler) loop() {
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
 
-	// 启动时立即执行一次
+	// Run immediately on start
 	s.scanAndPublish()
 
 	for {
@@ -84,11 +88,10 @@ func (s *Scheduler) loop() {
 	}
 }
 
-// scanAndPublish 扫描并发布到期的内容
+// scanAndPublish finds all due content and publishes it.
 func (s *Scheduler) scanAndPublish() {
 	now := time.Now().In(s.timezone)
 
-	// 查找所有已排期且到时间的内容
 	var contents []model.Content
 	err := s.db.Where(
 		"status = ? AND scheduled_at <= ?",
@@ -96,7 +99,7 @@ func (s *Scheduler) scanAndPublish() {
 	).Order("scheduled_at ASC").Find(&contents).Error
 
 	if err != nil {
-		log.Printf("[Scheduler] 扫描排期失败: %v", err)
+		slog.Error("scan scheduled content failed", "error", err)
 		return
 	}
 
@@ -104,33 +107,40 @@ func (s *Scheduler) scanAndPublish() {
 		return
 	}
 
-	log.Printf("[Scheduler] 发现 %d 条待发布内容", len(contents))
+	slog.Info("publishable content found", "count", len(contents))
 
-	// 逐条发布
 	for _, content := range contents {
 		s.publishContent(&content)
 	}
 }
 
-// publishContent 发布单条内容
+// publishContent publishes a single content item with retry logic.
 func (s *Scheduler) publishContent(content *model.Content) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	log.Printf("[Scheduler] 开始发布 #%d: %s", content.ID, content.Topic)
+	slog.Info("publishing content",
+		"id", content.ID,
+		"topic", content.Topic,
+		"platform", content.Platform,
+	)
 
-	// 选择发布器
+	// Select the appropriate publisher
 	pub := s.selectPublisher(content.Platform)
 	if pub == nil {
-		s.markFailed(content, "没有可用的发布器")
+		s.markFailed(content, "no available publisher")
 		return
 	}
 
-	// 带重试的发布
+	// Retry loop
 	var lastErr error
 	for attempt := 0; attempt <= s.maxRetries; attempt++ {
 		if attempt > 0 {
-			log.Printf("[Scheduler] 重试 #%d (attempt %d/%d)", content.ID, attempt, s.maxRetries)
+			slog.Info("retrying publish",
+				"content_id", content.ID,
+				"attempt", attempt,
+				"max_retries", s.maxRetries,
+			)
 			time.Sleep(s.retryDelay)
 		}
 
@@ -141,14 +151,14 @@ func (s *Scheduler) publishContent(content *model.Content) {
 		}
 		lastErr = err
 		if result != nil {
-			lastErr = fmtErr(result.Message)
+			lastErr = fmt.Errorf("%s", result.Message)
 		}
 	}
 
-	s.markFailed(content, fmt.Sprintf("发布失败（已重试%d次）: %v", s.maxRetries, lastErr))
+	s.markFailed(content, fmt.Sprintf("publish failed after %d retries: %v", s.maxRetries, lastErr))
 }
 
-// selectPublisher 根据平台选择发布器
+// selectPublisher selects the appropriate publisher for the given platform.
 func (s *Scheduler) selectPublisher(platform model.Platform) publisher.Publisher {
 	switch platform {
 	case model.PlatformZhihu, model.PlatformBoth:
@@ -163,62 +173,58 @@ func (s *Scheduler) selectPublisher(platform model.Platform) publisher.Publisher
 	return nil
 }
 
-// markPublished 标记为已发布
+// markPublished marks content as successfully published.
 func (s *Scheduler) markPublished(content *model.Content, result *publisher.PublishResult) {
 	now := time.Now()
-	updates := map[string]interface{}{
-		"status":       model.StatusPublished,
-		"published_at": now,
+	updates := map[string]any{
+		"status":        model.StatusPublished,
+		"published_at":  now,
 		"publish_error": nil,
-		"retry_count":  0,
+		"retry_count":   0,
 	}
 
-	s.db.Model(content).Updates(updates)
-	log.Printf("[Scheduler] ✅ 发布成功 #%d: %s", content.ID, result.URL)
+	if err := s.db.Model(content).Updates(updates).Error; err != nil {
+		slog.Error("mark published failed", "content_id", content.ID, "error", err)
+		return
+	}
+	slog.Info("publish succeeded", "content_id", content.ID, "url", result.URL)
 }
 
-// markFailed 标记为发布失败
+// markFailed marks content as failed or keeps it scheduled for retry.
 func (s *Scheduler) markFailed(content *model.Content, errMsg string) {
 	retryCount := content.RetryCount + 1
 	status := model.StatusFailed
 	if retryCount <= s.maxRetries {
-		status = model.StatusScheduled // 保持排期状态等待下次重试
+		status = model.StatusScheduled // keep scheduled for next scan
 	}
 
-	updates := map[string]interface{}{
+	updates := map[string]any{
 		"status":        status,
 		"publish_error": errMsg,
 		"retry_count":   retryCount,
 	}
 
-	s.db.Model(content).Updates(updates)
-	log.Printf("[Scheduler] ❌ 发布失败 #%d: %s (retry: %d/%d)", content.ID, errMsg, retryCount, s.maxRetries)
+	if err := s.db.Model(content).Updates(updates).Error; err != nil {
+		slog.Error("mark failed update error", "content_id", content.ID, "error", err)
+	}
+	slog.Error("publish failed",
+		"content_id", content.ID,
+		"error", errMsg,
+		"retry", fmt.Sprintf("%d/%d", retryCount, s.maxRetries),
+	)
 }
 
-// PublishNow 立即发布指定内容（供手动触发）
+// PublishNow immediately triggers publishing for a content item (async).
 func (s *Scheduler) PublishNow(contentID int64) error {
 	var content model.Content
 	if err := s.db.First(&content, contentID).Error; err != nil {
-		return fmtErr("内容不存在: " + err.Error())
+		return fmt.Errorf("content not found: %w", err)
 	}
 
 	if content.Status != model.StatusApproved && content.Status != model.StatusScheduled {
-		return fmtErr("内容状态不允许发布: " + string(content.Status))
+		return fmt.Errorf("content status %q cannot be published", content.Status)
 	}
 
 	go s.publishContent(&content)
 	return nil
-}
-
-// fmtErr 辅助函数
-func fmtErr(msg string) error {
-	return &schedError{msg}
-}
-
-type schedError struct {
-	msg string
-}
-
-func (e *schedError) Error() string {
-	return e.msg
 }

@@ -2,7 +2,7 @@ package handler
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -156,7 +156,7 @@ func (h *ContentHandler) GenerateDraft(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Generate] 开始生成: 平台=%s 类型=%s 选题=%s", req.Platform, req.Type, req.Topic)
+	slog.Info("ai generation start", "platform", req.Platform, "type", req.Type, "topic", req.Topic)
 
 	// 1. 获取 System Prompt（优先从文件读取）
 	sysPrompt := h.pm.GetSystemPrompt(string(req.Platform), getSystemPrompt(h.cfg, req.Platform))
@@ -173,7 +173,7 @@ func (h *ContentHandler) GenerateDraft(c *gin.Context) {
 		UserPrompt:   userPrompt,
 	})
 	if err != nil {
-		log.Printf("[Generate] AI 生成失败: %v", err)
+		slog.Error("ai generation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code": 1,
 			"msg":  fmt.Sprintf("AI 生成失败: %v", err),
@@ -181,7 +181,7 @@ func (h *ContentHandler) GenerateDraft(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Generate] 生成完成，耗时 %v，内容长度 %d", textResp.Duration, len(textResp.Text))
+	slog.Info("ai generation complete", "duration", textResp.Duration, "content_len", len(textResp.Text))
 
 	// 4. 解析输出
 	parsed := provider.ParseMarkedOutput(textResp.Text, req.Platform)
@@ -235,7 +235,7 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 		req.ImageAspectRatio = getDefaultAspectRatio(req.Platform)
 	}
 
-	log.Printf("[Generate+Image] 开始: 平台=%s 选题=%s 图片=%v", req.Platform, req.Topic, req.NeedCover)
+	slog.Info("generation with image start", "platform", req.Platform, "topic", req.Topic, "need_cover", req.NeedCover)
 
 	// 1. 生成文字
 	sysPrompt := h.pm.GetSystemPrompt(string(req.Platform), getSystemPrompt(h.cfg, req.Platform))
@@ -263,7 +263,7 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 			ImageStyle:       req.ImageStyle,
 		})
 		if imgErr != nil {
-			log.Printf("[Generate+Image] 图片生成失败: %v（文字已生成）", imgErr)
+			slog.Warn("image generation failed but text generated", "error", imgErr)
 		} else {
 			images = imgResp.Images
 		}

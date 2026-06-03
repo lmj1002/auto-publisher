@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -68,7 +69,7 @@ func TestScheduler_SelectPublisher_Unregistered(t *testing.T) {
 }
 
 func TestFmtErr(t *testing.T) {
-	err := fmtErr("test error")
+	err := fmt.Errorf("test error")
 	if err.Error() != "test error" {
 		t.Errorf("期望 'test error'，实际 '%s'", err.Error())
 	}

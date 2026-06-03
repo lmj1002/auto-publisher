@@ -10,7 +10,8 @@ import (
 	"text/template"
 )
 
-// PromptManager Prompt 模板管理器
+// PromptManager manages prompt templates loaded from .md files.
+// It supports Go template rendering, file-based system prompts, and hot-reload.
 type PromptManager struct {
 	promptDir string
 	cache     map[string]*PromptTemplate

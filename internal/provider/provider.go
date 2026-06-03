@@ -1,3 +1,6 @@
+// Package provider defines the AI generation interface and supporting types.
+// It provides a unified abstraction over different AI backends (Claude Code CLI, Gemini API, etc.)
+// with model routing and automatic fallback.
 package provider
 
 import (
@@ -7,63 +10,66 @@ import (
 	"auto-publisher/internal/model"
 )
 
-// ProviderType AI 能力类型
+// ProviderType classifies an AI provider by its generation capability.
 type ProviderType string
 
 const (
-	ProviderText  ProviderType = "text"
+	// ProviderText generates text content.
+	ProviderText ProviderType = "text"
+	// ProviderImage generates images.
 	ProviderImage ProviderType = "image"
+	// ProviderVideo generates videos (reserved for future use).
 	ProviderVideo ProviderType = "video"
 )
 
-// AIProvider 统一 AI 能力接口
+// AIProvider defines the interface for all AI generation backends.
 type AIProvider interface {
-	// Name 返回 Provider 名称
+	// Name returns a human-readable provider identifier.
 	Name() string
-	// Type 返回 AI 能力类型
+	// Type returns the provider capability type.
 	Type() ProviderType
-	// Generate 执行生成任务
+	// Generate produces content from the given request.
 	Generate(ctx context.Context, req *GenerateRequest) (*GenerateResponse, error)
-	// IsAvailable 检查 Provider 是否可用
+	// IsAvailable checks whether the provider is ready to serve requests.
 	IsAvailable(ctx context.Context) bool
 }
 
-// GenerateRequest 统一生成请求
+// GenerateRequest contains all parameters for an AI generation call.
 type GenerateRequest struct {
-	TaskType     ProviderType   `json:"task_type"`     // text / image / video
-	Platform     model.Platform `json:"platform"`      // xiaohongshu / zhihu / both
-	ContentType  model.ContentType `json:"content_type"` // article / note / idea
-	SystemPrompt string         `json:"system_prompt"` // 系统 Prompt
-	UserPrompt   string         `json:"user_prompt"`   // 用户 Prompt（选题+观点）
-	Options      map[string]any `json:"options"`       // 额外参数
+	TaskType     ProviderType      `json:"task_type"`
+	Platform     model.Platform    `json:"platform"`
+	ContentType  model.ContentType `json:"content_type"`
+	SystemPrompt string            `json:"system_prompt"` // AI role/style guidelines
+	UserPrompt   string            `json:"user_prompt"`   // Topic + key points
+	Options      map[string]any    `json:"options"`       // Provider-specific params
 
-	// 图片生成特定参数
-	ImageAspectRatio string `json:"image_aspect_ratio,omitempty"` // 1:1 / 3:4 / 16:9
-	ImageStyle       string `json:"image_style,omitempty"`        // 风格描述
+	// Image generation parameters
+	ImageAspectRatio string `json:"image_aspect_ratio,omitempty"` // e.g. "3:4", "16:9", "1:1"
+	ImageStyle       string `json:"image_style,omitempty"`        // Style description
 }
 
-// GenerateResponse 统一生成响应
+// GenerateResponse contains the result of an AI generation call.
 type GenerateResponse struct {
-	Text     string        `json:"text"`     // 文字内容
-	Images   []ImageResult `json:"images"`   // 图片列表
-	Model    string        `json:"model"`    // 实际使用的模型名
-	Duration time.Duration `json:"duration"` // 耗时
-	RawOutput string       `json:"raw_output,omitempty"` // 原始输出
+	Text      string        `json:"text"`                // Generated text
+	Images    []ImageResult `json:"images"`              // Generated images
+	Model     string        `json:"model"`               // Model identifier
+	Duration  time.Duration `json:"duration"`            // Generation time
+	RawOutput string        `json:"raw_output,omitempty"` // Unprocessed output
 }
 
-// ImageResult 图片生成结果
+// ImageResult holds a generated image and its metadata.
 type ImageResult struct {
-	Data     []byte `json:"-"`         // 图片二进制（不序列化）
-	Format   string `json:"format"`    // png / jpg / webp
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	FilePath string `json:"file_path"` // 本地保存路径
-	URL      string `json:"url"`       // 可访问 URL
+	Data     []byte `json:"-"`         // Raw image bytes (not serialized)
+	Format   string `json:"format"`    // Image format: png, jpg, webp
+	Width    int    `json:"width"`     // Image width in pixels
+	Height   int    `json:"height"`    // Image height in pixels
+	FilePath string `json:"file_path"` // Local file path
+	URL      string `json:"url"`       // Accessible URL
 }
 
-// ParsedTextContent 解析后的文字内容
+// ParsedTextContent holds the structured output from text generation.
 type ParsedTextContent struct {
-	Titles []string // 候选标题
-	Body   string   // 正文
-	Tags   []string // 标签/话题
+	Titles []string // Candidate titles
+	Body   string   // Main content body
+	Tags   []string // Hashtag topics
 }
