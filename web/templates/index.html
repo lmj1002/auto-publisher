@@ -47,6 +47,10 @@
             border: 1px solid var(--border); border-radius: var(--radius);
             font-size: 13px; font-family: inherit;
         }
+        .form-group input[type="checkbox"] {
+            width: auto; padding: 0; border: none;
+            margin-right: 6px; vertical-align: middle;
+        }
         .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
             outline: none; border-color: var(--primary);
             box-shadow: 0 0 0 3px rgba(79,70,229,0.08);
@@ -90,10 +94,19 @@
         }
         .badge-draft { background: #f1f5f9; color: #64748b; }
         .badge-ai_generated { background: #dbeafe; color: #2563eb; }
+        .badge-review { background: #fef3c7; color: #d97706; }
         .badge-approved { background: #dcfce7; color: #16a34a; }
         .badge-scheduled { background: #fef3c7; color: #d97706; }
         .badge-published { background: #d1fae5; color: #059669; }
         .badge-failed { background: #fee2e2; color: #dc2626; }
+        .badge-pending { background: #e0e7ff; color: #4338ca; }
+        .badge-publishing { background: #dbeafe; color: #1d4ed8; }
+        .badge-processing { background: #dbeafe; color: #1d4ed8; }
+        .badge-completed { background: #d1fae5; color: #059669; }
+        .badge-partially_completed { background: #fef3c7; color: #d97706; }
+        .badge-cancelled { background: #f1f5f9; color: #94a3b8; }
+        .badge-reviewing { background: #fef3c7; color: #d97706; }
+        .badge-partially_published { background: #fef3c7; color: #d97706; }
 
         .tab-bar { display: flex; gap: 2px; margin-bottom: 14px; border-bottom: 1px solid var(--border); }
         .tab { padding: 7px 14px; cursor: pointer; border-bottom: 2px solid transparent; font-size: 13px; color: var(--text-secondary); }
@@ -123,20 +136,113 @@
         .toast-error { background: var(--danger); }
         .toast-info { background: var(--primary); }
         @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes flashHighlight {
+            0% { box-shadow: 0 0 0 0 rgba(79,70,229,0.4); }
+            50% { box-shadow: 0 0 0 6px rgba(79,70,229,0.15); }
+            100% { box-shadow: 0 0 0 0 rgba(79,70,229,0); }
+        }
+        .flash-highlight { animation: flashHighlight 0.6s ease-out; }
 
         .schedule-row { display: flex; gap: 8px; align-items: center; }
         .schedule-row input[type="datetime-local"] { flex: 1; }
+
+        /* Navigation tabs */
+        .nav-tabs { display: flex; gap: 2px; }
+        .nav-tab {
+            padding: 8px 18px; cursor: pointer; font-size: 14px; font-weight: 500;
+            color: var(--text-secondary); border-bottom: 2px solid transparent;
+            transition: all 0.2s; user-select: none;
+        }
+        .nav-tab:hover { color: var(--text); }
+        .nav-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+        /* View sections */
+        .view-section {
+            background: var(--card); border: 1px solid var(--border);
+            border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow);
+        }
+
+        /* Schedule items */
+        .schedule-item {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 14px; border: 1px solid var(--border);
+            border-radius: var(--radius); margin-bottom: 6px;
+            transition: all 0.15s;
+        }
+        .schedule-item:hover { border-color: var(--primary); }
+        .schedule-info { flex: 1; min-width: 0; }
+        .schedule-topic {
+            font-weight: 500; font-size: 14px; cursor: pointer;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .schedule-topic:hover { color: var(--primary); }
+        .schedule-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+        .schedule-actions { display: flex; gap: 6px; flex-shrink: 0; margin-left: 10px; align-items: center; }
+
+        /* Filter buttons */
+        .filter-btn {
+            padding: 4px 14px; border-radius: 14px; cursor: pointer;
+            font-size: 12px; color: var(--text-secondary);
+            border: 1px solid var(--border); background: white;
+            transition: all 0.2s; user-select: none;
+        }
+        .filter-btn:hover { border-color: var(--primary); color: var(--primary); }
+        .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+        /* Execution log table */
+        .log-table {
+            border: 1px solid var(--border); border-radius: var(--radius);
+            overflow: hidden; font-size: 13px;
+        }
+        .log-header, .log-row {
+            display: flex; padding: 10px 14px; gap: 8px; align-items: center;
+        }
+        .log-header {
+            background: #f8fafc; font-weight: 600; font-size: 12px;
+            color: var(--text-secondary); border-bottom: 1px solid var(--border);
+        }
+        .log-row {
+            border-bottom: 1px solid var(--border); transition: background 0.15s;
+        }
+        .log-row:last-child { border-bottom: none; }
+        .log-row:hover { background: #f8faff; }
+        .log-row-failed { background: #fef2f2; }
+        .log-row-failed:hover { background: #fee2e2; }
+        .log-col-topic {
+            flex: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; cursor: pointer;
+        }
+        .log-col-topic:hover { color: var(--primary); }
+        .log-col-platform { flex: 0.8; }
+        .log-col-status { flex: 0.8; }
+        .log-col-time { flex: 1.2; font-size: 12px; color: var(--text-secondary); }
+        .log-col-retry { flex: 0.5; text-align: center; font-size: 12px; }
+        .log-col-error {
+            flex: 2; font-size: 12px; color: var(--danger);
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        @media (max-width: 900px) {
+            .log-row, .log-header { font-size: 11px; padding: 8px 10px; }
+        }
     </style>
 </head>
 <body>
     <header>
         <div class="container">
-            <h1>📝 自媒体内容管理</h1>
-            <div class="status-bar" id="sysStatus">加载中...</div>
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h1>📝 自媒体内容管理</h1>
+                <div class="status-bar" id="sysStatus">加载中...</div>
+            </div>
+            <nav class="nav-tabs" style="margin-top:10px;">
+                <span class="nav-tab active" onclick="switchView('content')">📋 内容管理</span>
+                <span class="nav-tab" onclick="switchView('schedule')">📅 排期管理</span>
+                <span class="nav-tab" onclick="switchView('logs')">📊 执行日志</span>
+            </nav>
         </div>
     </header>
 
     <div class="container">
+        <div id="viewContent">
         <div class="layout">
             <!-- 左侧：创建 & 编辑 -->
             <div>
@@ -226,9 +332,11 @@
                                 <option value="">全部</option>
                                 <option value="draft">草稿</option>
                                 <option value="ai_generated">AI已生成</option>
+                                <option value="reviewing">审核中</option>
                                 <option value="approved">已定稿</option>
                                 <option value="scheduled">已排期</option>
                                 <option value="published">已发布</option>
+                                <option value="partially_published">部分发布</option>
                                 <option value="failed">失败</option>
                             </select>
                         </div>
@@ -239,15 +347,47 @@
                 </div>
             </div>
         </div>
+        </div><!-- /#viewContent -->
+
+        <!-- 排期管理视图 -->
+        <div id="viewSchedule" class="view-section" hidden>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h2 style="margin:0; padding:0; border:none;">📅 排期管理</h2>
+                <span style="font-size:12px; color:var(--text-secondary);" id="scheduleCount"></span>
+            </div>
+            <div id="scheduleList">
+                <div class="empty-state">加载中...</div>
+            </div>
+        </div>
+
+        <!-- 执行日志视图 -->
+        <div id="viewLogs" class="view-section" hidden>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <h2 style="margin:0; padding:0; border:none;">📊 执行日志</h2>
+                <div style="display:flex; gap:4px;">
+                    <span class="filter-btn active" data-filter="" onclick="setLogFilter('',event)">全部</span>
+                    <span class="filter-btn" data-filter="success" onclick="setLogFilter('success',event)">成功</span>
+                    <span class="filter-btn" data-filter="failed" onclick="setLogFilter('failed',event)">失败</span>
+                </div>
+            </div>
+            <div id="logList">
+                <div class="empty-state">加载中...</div>
+            </div>
+        </div>
     </div>
 
     <script>
         const API = '/api';
         let currentContent = null;
+        let logFilter = '';
+        let logPage = 1;
+        let logTotal = 0;
+        const LOG_PAGE_SIZE = 30;
 
         document.addEventListener('DOMContentLoaded', () => {
             loadContents();
             refreshStatus();
+            resetScheduleTime();
             setInterval(refreshStatus, 30000);
 
             document.getElementById('platform').addEventListener('change', e => {
@@ -290,12 +430,15 @@
                             <div class="meta">
                                 <span class="badge badge-${c.status}">${c.status}</span>
                                 ${c.platform} · ${c.content_type} · ${fmtDate(c.created_at)}
-                                ${c.scheduled_at ? ' ⏰'+fmtDate(c.scheduled_at) : ''}
+                                ${c.schedule_scheduled_at ? ' ⏰'+fmtDate(c.schedule_scheduled_at) : (c.scheduled_at ? ' ⏰'+fmtDate(c.scheduled_at) : '')}
+                                ${(c.schedule_retry_count || 0) > 0 ? ` · 🔄${c.schedule_retry_count}次` : ''}
+                                ${c.schedule_publish_error ? ` · ❌${esc((c.schedule_publish_error || '').substring(0, 30))}` : ''}
                             </div>
                         </div>
                         <div class="actions" onclick="event.stopPropagation()">
                             <button class="btn btn-outline btn-xs" onclick="viewContent(${c.id})">查看</button>
                             ${c.status === 'approved' || c.status === 'scheduled' ? `<button class="btn btn-success btn-xs" onclick="publishItem(${c.id},'${c.platform}')">发布</button>` : ''}
+                            ${c.status === 'failed' ? `<button class="btn btn-warning btn-xs" onclick="retryPublish(${c.id})">重试</button>` : ''}
                         </div>
                     </div>
                 `).join('');
@@ -306,7 +449,9 @@
             try {
                 const res = await fetch(API + '/contents/' + id);
                 const data = await res.json();
-                const c = data.data;
+                // Handle new response format: {content: ..., latest_schedule: ...}
+                const c = data.data.content || data.data;
+                const latestSched = data.data.latest_schedule;
                 currentContent = c;
 
                 document.getElementById('topic').value = c.topic || '';
@@ -321,6 +466,16 @@
                 document.getElementById('tabRaw').textContent = c.ai_raw_output || '(无AI原始输出)';
                 document.getElementById('resultCard').hidden = false;
 
+                // 滚动到编辑面板 + 高亮闪烁提示
+                const leftPanel = document.querySelector('.layout > div:first-child');
+                if (leftPanel) leftPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                const formCard = leftPanel ? leftPanel.querySelector('.card') : null;
+                if (formCard) {
+                    formCard.classList.remove('flash-highlight');
+                    void formCard.offsetWidth;
+                    formCard.classList.add('flash-highlight');
+                }
+
                 // 按钮状态
                 document.getElementById('btnSave').hidden = false;
                 document.getElementById('btnCancel').hidden = false;
@@ -328,13 +483,79 @@
                 document.getElementById('btnPublishXHS').hidden = !(c.status === 'approved' && (c.platform === 'xiaohongshu' || c.platform === 'both'));
                 document.getElementById('btnPublishZH').hidden = !(c.status === 'approved' && (c.platform === 'zhihu' || c.platform === 'both'));
 
-                // 排期时间
-                if (c.scheduled_at) {
-                    document.getElementById('scheduleTime').value = c.scheduled_at.replace(' ', 'T').substring(0, 16);
+                // 排期时间 — use latest schedule's scheduled_at if available
+                const schedTime = (latestSched && latestSched.scheduled_at) || c.scheduled_at;
+                if (schedTime) {
+                    document.getElementById('scheduleTime').value = schedTime.replace(' ', 'T').substring(0, 16);
+                } else {
+                    resetScheduleTime();
                 }
 
+                // Show schedule history
+                loadScheduleHistory(c.id);
+
                 loadContents();
-            } catch(e) { showToast('加载失败', 'error'); }
+            } catch(e) {
+                console.error('viewContent error:', e);
+                showToast('加载失败: ' + e.message, 'error');
+            }
+        }
+
+        async function loadScheduleHistory(contentId) {
+            try {
+                const res = await fetch(API + '/contents/' + contentId + '/schedules');
+                const data = await res.json();
+                const schedules = (data.data && data.data.list) || [];
+
+                let histContainer = document.getElementById('scheduleHistory');
+                if (!histContainer) {
+                    histContainer = document.createElement('div');
+                    histContainer.id = 'scheduleHistory';
+                    histContainer.style.cssText = 'margin-top:12px;padding:12px;background:#f8fafc;border-radius:var(--radius);';
+                    document.getElementById('resultCard').appendChild(histContainer);
+                }
+
+                if (schedules.length === 0) {
+                    histContainer.innerHTML = '<div style="font-size:12px;color:var(--text-secondary);">暂无发布记录</div>';
+                    return;
+                }
+
+                const statusLabels = {pending:'等待', publishing:'发布中', published:'已发布', failed:'失败', cancelled:'已取消'};
+                let html = '<div style="font-size:13px;font-weight:500;margin-bottom:8px;">📋 发布历史 (' + schedules.length + ')</div>';
+                for (const s of schedules) {
+                    const badgeClass = 'badge-' + s.status;
+                    html += '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">' +
+                        '<span class="badge ' + badgeClass + '">' + (statusLabels[s.status] || s.status) + '</span>' +
+                        '<span>⏰ ' + fmtDateTime(s.scheduled_at) + '</span>' +
+                        '<span>🔄 ' + (s.retry_count || 0) + '次</span>' +
+                        (s.publish_error ? '<span title="' + esc(s.publish_error) + '" style="color:var(--danger);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">❌ ' + esc((s.publish_error || '').substring(0, 30)) + '</span>' : '') +
+                        '<button class="btn btn-outline btn-xs" onclick="loadScheduleLogs(' + s.id + ')">📋 日志</button>' +
+                        '</div>';
+                }
+                histContainer.innerHTML = html;
+            } catch(e) {
+                console.error('loadScheduleHistory error:', e);
+            }
+        }
+
+        async function loadScheduleLogs(scheduleId) {
+            try {
+                const res = await fetch(API + '/schedules/' + scheduleId + '/logs');
+                const data = await res.json();
+                const logs = (data.data && data.data.list) || [];
+                if (logs.length === 0) {
+                    showToast('暂无日志', 'info');
+                    return;
+                }
+                // Show a brief summary in toast, detailed in console for now
+                const summary = logs.map(l =>
+                    (l.status === 'success' ? '✅' : '❌') + ' ' + l.platform + ' #' + l.attempt + ' ' + (l.duration_ms || 0) + 'ms'
+                ).join(' | ');
+                showToast('发布日志: ' + summary, 'info');
+                console.log('Schedule #' + scheduleId + ' logs:', logs);
+            } catch(e) {
+                console.error('loadScheduleLogs error:', e);
+            }
         }
 
         async function generateDraft() {
@@ -424,6 +645,7 @@
             document.getElementById('btnApprove').hidden = true;
             document.getElementById('btnPublishXHS').hidden = true;
             document.getElementById('btnPublishZH').hidden = true;
+            resetScheduleTime();
             loadContents();
         }
 
@@ -473,10 +695,33 @@
         async function publishItem(id, platform) {
             if (!confirm(`确定发布 #${id} 吗？`)) return;
             try {
-                await fetch(API + '/contents/' + id + '/publish', {method: 'POST'});
-                showToast('已提交发布', 'success');
-            } catch(e) { showToast('失败', 'error'); }
+                const res = await fetch(API + '/contents/' + id + '/publish', {method: 'POST'});
+                const data = await res.json();
+                if (data.code === 0) showToast('已提交发布', 'success');
+                else showToast(data.msg || '发布失败', 'error');
+            } catch(e) { showToast('网络错误', 'error'); }
             setTimeout(loadContents, 2000);
+        }
+
+        async function retryPublish(id) {
+            if (!confirm(`确定重试发布 #${id} 吗？`)) return;
+            try {
+                const res = await fetch(API + '/contents/' + id + '/publish', {method: 'POST'});
+                const data = await res.json();
+                if (data.code === 0) showToast('已提交重试发布', 'success');
+                else showToast(data.msg || '重试失败', 'error');
+            } catch(e) { showToast('网络错误', 'error'); }
+            // Auto-refresh after delay to show updated status
+            setTimeout(async () => {
+                await loadContents();
+                // Also refresh schedule view if active
+                const activeTab = document.querySelector('.nav-tab.active');
+                if (activeTab && activeTab.textContent.includes('排期')) {
+                    loadScheduleList();
+                }
+                // Refresh current detail view
+                if (currentContent) viewContent(currentContent.id);
+            }, 3000);
         }
 
         function switchTab(tab) {
@@ -495,6 +740,279 @@
             t.textContent = msg;
             document.body.appendChild(t);
             setTimeout(() => t.remove(), 2800);
+        }
+
+        // ==================== 视图切换 ====================
+
+        function switchView(viewName) {
+            document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+            // Find and activate the nav tab matching viewName
+            const tabs = document.querySelectorAll('.nav-tab');
+            const labels = ['content', 'schedule', 'logs'];
+            const idx = labels.indexOf(viewName);
+            if (idx >= 0 && tabs[idx]) tabs[idx].classList.add('active');
+
+            document.getElementById('viewContent').hidden = viewName !== 'content';
+            document.getElementById('viewSchedule').hidden = viewName !== 'schedule';
+            document.getElementById('viewLogs').hidden = viewName !== 'logs';
+
+            if (viewName === 'schedule') loadScheduleList();
+            if (viewName === 'logs') loadExecutionLogs();
+        }
+
+        // ==================== 排期管理 ====================
+
+        async function loadScheduleList() {
+            const container = document.getElementById('scheduleList');
+            const countEl = document.getElementById('scheduleCount');
+            container.innerHTML = '<div class="empty-state">加载中...</div>';
+
+            try {
+                // Fetch both scheduled and failed items in parallel
+                const [schedRes, failedRes] = await Promise.all([
+                    fetch(API + '/contents?status=scheduled&page_size=100'),
+                    fetch(API + '/contents?status=failed&page_size=100'),
+                ]);
+                const schedData = await schedRes.json();
+                const failedData = await failedRes.json();
+                const scheduled = (schedData.data && schedData.data.list) || [];
+                const failed = (failedData.data && failedData.data.list) || [];
+                countEl.textContent = `排期 ${scheduled.length} 条 · 失败 ${failed.length} 条`;
+
+                if (scheduled.length === 0 && failed.length === 0) {
+                    container.innerHTML = '<div class="empty-state">暂无排期任务 📅</div>';
+                    return;
+                }
+
+                let html = '';
+
+                // Scheduled section
+                if (scheduled.length > 0) {
+                    html += '<div style="font-size:13px;font-weight:500;margin-bottom:8px;color:var(--text-secondary);">📅 已排期</div>';
+                    html += scheduled.map(c => {
+                        const timeStr = c.scheduled_at ? c.scheduled_at.replace('T', ' ').substring(0, 16) : '';
+                        return `
+                        <div class="schedule-item">
+                            <div class="schedule-info">
+                                <div class="schedule-topic" onclick="viewScheduledContent(${c.id})">${esc(c.topic || '(无标题)')}</div>
+                                <div class="schedule-meta">
+                                    <span class="badge badge-${c.status}">${c.status}</span>
+                                    ${c.platform} · ${c.content_type}
+                                    ${timeStr ? ' · ⏰ ' + timeStr : ''}
+                                </div>
+                            </div>
+                            <div class="schedule-actions" id="actions-${c.id}">
+                                <button class="btn btn-outline btn-xs" onclick="showReschedule(${c.id},'${timeStr}')">修改时间</button>
+                                <button class="btn btn-outline btn-xs" style="color:var(--danger);border-color:var(--danger);" onclick="cancelSchedule(${c.id})">取消排期</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+
+                // Failed section
+                if (failed.length > 0) {
+                    html += '<div style="font-size:13px;font-weight:500;margin:16px 0 8px;color:var(--danger);">❌ 发布失败</div>';
+                    html += failed.map(c => {
+                        const errDetail = c.schedule_publish_error || (c.publish_error ? (c.publish_error.String || c.publish_error) : '');
+                        const retryInfo = (c.schedule_retry_count || 0) > 0 ? ` · 🔄${c.schedule_retry_count}次` : '';
+                        return `
+                        <div class="schedule-item" style="border-color:#fecaca;">
+                            <div class="schedule-info">
+                                <div class="schedule-topic" onclick="viewScheduledContent(${c.id})">${esc(c.topic || '(无标题)')}</div>
+                                <div class="schedule-meta">
+                                    <span class="badge badge-failed">failed</span>
+                                    ${c.platform} · ${c.content_type}${retryInfo}
+                                    ${errDetail ? ' · ' + esc((''+errDetail).substring(0, 60)) : ''}
+                                </div>
+                            </div>
+                            <div class="schedule-actions">
+                                <button class="btn btn-warning btn-xs" onclick="retryPublish(${c.id})">🔄 重试</button>
+                                <button class="btn btn-outline btn-xs" style="color:var(--danger);border-color:var(--danger);" onclick="removeFailed(${c.id})">删除</button>
+                            </div>
+                        </div>`;
+                    }).join('');
+                }
+
+                container.innerHTML = html;
+            } catch(e) {
+                console.error('loadScheduleList error:', e);
+                document.getElementById('scheduleList').innerHTML = '<div class="empty-state">加载失败</div>';
+            }
+        }
+
+        async function removeFailed(id) {
+            if (!confirm('确定删除这条失败记录吗？')) return;
+            try {
+                await fetch(API + '/contents/' + id, { method: 'DELETE' });
+                showToast('已删除', 'success');
+                loadScheduleList();
+                loadContents();
+            } catch(e) { showToast('删除失败', 'error'); }
+        }
+
+        async function cancelSchedule(id) {
+            if (!confirm('确定取消排期？内容将恢复为"已定稿"状态。')) return;
+            try {
+                const res = await fetch(API + '/contents/' + id + '/unschedule', { method: 'POST' });
+                const data = await res.json();
+                if (data.code === 0) {
+                    showToast('已取消排期', 'success');
+                    loadScheduleList();
+                    loadContents();
+                } else {
+                    showToast(data.msg || '操作失败', 'error');
+                }
+            } catch(e) {
+                console.error('cancelSchedule error:', e);
+                showToast('操作失败', 'error');
+            }
+        }
+
+        function showReschedule(id, currentTime) {
+            const actions = document.getElementById('actions-' + id);
+            actions.innerHTML = `
+                <input type="datetime-local" id="newTime-${id}" value="${currentTime}" style="padding:4px 8px;border:1px solid var(--border);border-radius:var(--radius);font-size:11px;width:165px;">
+                <button class="btn btn-success btn-xs" onclick="submitReschedule(${id})">保存</button>
+                <button class="btn btn-outline btn-xs" onclick="loadScheduleList()">取消</button>
+            `;
+        }
+
+        async function submitReschedule(id) {
+            const input = document.getElementById('newTime-' + id);
+            const val = input.value;
+            if (!val) { showToast('请选择时间', 'error'); return; }
+            // Convert datetime-local to required format
+            const formatted = val.replace('T', ' ') + ':00';
+            try {
+                const res = await fetch(API + '/contents/' + id + '/schedule', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scheduled_at: formatted }),
+                });
+                const data = await res.json();
+                if (data.code === 0) {
+                    showToast('排期时间已更新', 'success');
+                    loadScheduleList();
+                    loadContents();
+                } else {
+                    showToast(data.msg || '操作失败', 'error');
+                }
+            } catch(e) {
+                console.error('submitReschedule error:', e);
+                showToast('操作失败', 'error');
+            }
+        }
+
+        function viewScheduledContent(id) {
+            switchView('content');
+            // Small delay to ensure DOM is ready after view switch
+            setTimeout(() => viewContent(id), 100);
+        }
+
+        // ==================== 执行日志 ====================
+
+        function setLogFilter(status, evt) {
+            logFilter = status;
+            logPage = 1;
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            if (evt && evt.target) evt.target.classList.add('active');
+            loadExecutionLogs();
+        }
+
+        async function loadExecutionLogs() {
+            try {
+                const params = new URLSearchParams({
+                    page: String(logPage),
+                    page_size: String(LOG_PAGE_SIZE),
+                });
+                if (logFilter) params.set('status', logFilter);
+                const res = await fetch(API + '/logs?' + params.toString());
+                const data = await res.json();
+                const list = (data.data && data.data.list) || [];
+                const total = data.data && data.data.total || 0;
+                logTotal = total;
+                const totalPages = Math.ceil(total / LOG_PAGE_SIZE);
+                const container = document.getElementById('logList');
+
+                if (list.length === 0) {
+                    container.innerHTML = '<div class="empty-state">暂无执行日志 📊</div>';
+                    return;
+                }
+
+                let html = `
+                    <div class="log-table">
+                        <div class="log-header">
+                            <span class="log-col-topic">选题</span>
+                            <span class="log-col-platform">平台</span>
+                            <span class="log-col-status">结果</span>
+                            <span class="log-col-retry">#</span>
+                            <span class="log-col-time">执行时间</span>
+                            <span class="log-col-time">耗时</span>
+                            <span class="log-col-error">详情</span>
+                        </div>`;
+
+                for (const c of list) {
+                    const isFailed = c.status === 'failed';
+                    const timeStr = c.created_at ? fmtDateTime(c.created_at) : '-';
+                    const durStr = c.duration_ms ? (c.duration_ms < 1000 ? c.duration_ms + 'ms' : (c.duration_ms / 1000).toFixed(1) + 's') : '-';
+                    const detail = isFailed ? (c.error_detail || c.message || '') : (c.url || c.message || '');
+                    const detailTitle = isFailed ? esc(c.error_detail || c.message || '') : esc(c.url || '');
+                    const screenshotLink = c.screenshot ? `<a href="/${c.screenshot}" target="_blank" style="font-size:11px;color:var(--primary);" title="查看截图">📷</a>` : '';
+                    html += `
+                            <div class="log-row${isFailed ? ' log-row-failed' : ''}">
+                                <span class="log-col-topic" onclick="viewLogContent(${c.content_id})" title="${esc(c.topic || '')}">${esc(c.topic || '(无标题)')}</span>
+                                <span class="log-col-platform">${esc(c.platform)}</span>
+                                <span class="log-col-status"><span class="badge ${isFailed ? 'badge-failed' : 'badge-published'}">${isFailed ? '失败' : '成功'}</span></span>
+                                <span class="log-col-retry">${c.attempt || 1}</span>
+                                <span class="log-col-time">${timeStr}</span>
+                                <span class="log-col-time" style="font-size:11px;color:var(--text-secondary);">${durStr}</span>
+                                <span class="log-col-error" title="${detailTitle}">${esc(detail) || '-'} ${screenshotLink}</span>
+                            </div>`;
+                }
+                html += '</div>';
+
+                // Pagination controls
+                if (totalPages > 1) {
+                    html += `<div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:14px;font-size:13px;color:var(--text-secondary);">`;
+                    html += `<button class="btn btn-outline btn-xs" onclick="goLogPage(${logPage - 1})" ${logPage <= 1 ? 'disabled' : ''}>上一页</button>`;
+                    html += `<span>第 ${logPage} / ${totalPages} 页 (共 ${total} 条)</span>`;
+                    html += `<button class="btn btn-outline btn-xs" onclick="goLogPage(${logPage + 1})" ${logPage >= totalPages ? 'disabled' : ''}>下一页</button>`;
+                    html += `</div>`;
+                }
+
+                container.innerHTML = html;
+            } catch(e) {
+                console.error('loadExecutionLogs error:', e);
+                document.getElementById('logList').innerHTML = '<div class="empty-state">加载失败</div>';
+            }
+        }
+
+        function goLogPage(p) {
+            const totalPages = Math.ceil(logTotal / LOG_PAGE_SIZE);
+            if (p < 1 || p > totalPages) return;
+            logPage = p;
+            loadExecutionLogs();
+        }
+
+        function viewLogContent(contentId) {
+            switchView('content');
+            setTimeout(() => viewContent(contentId), 100);
+        }
+
+        // ==================== 工具函数 ====================
+
+        function fmtDateTime(s) {
+            if (!s) return '-';
+            const d = s.replace('T', ' ').substring(0, 16);
+            return d;
+        }
+
+        function resetScheduleTime() {
+            const now = new Date();
+            now.setMinutes(now.getMinutes() + 5);
+            const pad = n => String(n).padStart(2, '0');
+            const val = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+            document.getElementById('scheduleTime').value = val;
         }
     </script>
 </body>

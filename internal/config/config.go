@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,9 +55,9 @@ func (d *DatabaseConfig) DSN() string {
 
 // ModelsConfig holds AI model provider routing configuration.
 type ModelsConfig struct {
-	DefaultTextProvider string             `yaml:"default_text_provider"`
+	DefaultTextProvider string              `yaml:"default_text_provider"`
 	Providers           map[string]Provider `yaml:"providers"`
-	Routing             RoutingConfig      `yaml:"routing"`
+	Routing             RoutingConfig       `yaml:"routing"`
 }
 
 // Provider holds configuration for a single AI provider.
@@ -177,21 +176,10 @@ func (s *SchedulerConfig) RetryDelayDuration() time.Duration {
 	return d
 }
 
-// Load reads and parses the config file at path, automatically loading .env files.
+// Load reads and parses the config file at path.
+// All configuration (credentials, API keys, etc.) lives directly in config.yaml.
+// .env files are no longer loaded.
 func Load(path string) (*Config, error) {
-	// Load .env from config file directory
-	configDir := filepath.Dir(path)
-	envFile := filepath.Join(configDir, ".env")
-	if _, err := os.Stat(envFile); err == nil {
-		if err := godotenv.Load(envFile); err != nil {
-			return nil, fmt.Errorf("load .env file: %w", err)
-		}
-	}
-	// Also try .env in current working directory
-	if _, err := os.Stat(".env"); err == nil {
-		_ = godotenv.Load(".env")
-	}
-
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config file: %w", err)
@@ -202,20 +190,34 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
 
-	// Environment variable overrides for database
-	if v := os.Getenv("DB_PASSWORD"); v != "" {
-		cfg.Database.Password = v
-	}
-	if v := os.Getenv("DB_USER"); v != "" {
-		cfg.Database.User = v
-	}
-	if v := os.Getenv("DB_HOST"); v != "" {
-		cfg.Database.Host = v
-	}
+	// Resolve ${ENV_VAR} references in config values (kept for backward compatibility)
+	cfg.resolveEnvRefs()
 
 	cfg.applyDefaults()
 
 	return cfg, nil
+}
+
+// resolveEnvRefs resolves ${ENV_VAR} placeholders in config values.
+func (c *Config) resolveEnvRefs() {
+	// Resolve provider API keys
+	for name, p := range c.Models.Providers {
+		p.APIKey = resolveEnvVar(p.APIKey)
+		c.Models.Providers[name] = p
+	}
+	// Resolve platform credentials
+	c.Platforms.Zhihu.Username = resolveEnvVar(c.Platforms.Zhihu.Username)
+	c.Platforms.Zhihu.Password = resolveEnvVar(c.Platforms.Zhihu.Password)
+	c.Platforms.Xiaohongshu.Username = resolveEnvVar(c.Platforms.Xiaohongshu.Username)
+	c.Platforms.Xiaohongshu.Password = resolveEnvVar(c.Platforms.Xiaohongshu.Password)
+}
+
+// resolveEnvVar resolves a single ${ENV_VAR} reference, returns the original string otherwise.
+func resolveEnvVar(s string) string {
+	if strings.HasPrefix(s, "${") && strings.HasSuffix(s, "}") {
+		return os.Getenv(s[2 : len(s)-1])
+	}
+	return s
 }
 
 // applyDefaults sets default values for optional configuration fields.

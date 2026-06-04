@@ -6,10 +6,10 @@ server:
 # 数据库配置
 database:
   driver: mysql
-  host: 127.0.0.1
+  host: 159.75.221.81
   port: 3306
-  user: root
-  password: ""
+  user: remote_admin
+  password: "rm@dm1n#2024"
   dbname: auto_publisher
   charset: utf8mb4
   max_idle_conns: 10
@@ -30,7 +30,7 @@ models:
     gemini:
       type: image
       enabled: true
-      api_key: "${GEMINI_API_KEY}"    # 环境变量引用
+      api_key: "AIzaSyBfE70BbN3VRwms3cWN5jmCLRdJY1TO5II"
       text_model: "gemini-1.5-pro"
       image_model: "gemini-2.0-flash-exp"
       base_url: "https://generativelanguage.googleapis.com"
@@ -96,17 +96,13 @@ platforms:
   xiaohongshu:
     enabled: true
     max_daily_posts: 2
-    # 账号密码登录（推荐，替代手动复制Cookie）
-    # 支持 ${ENV_VAR} 环境变量引用，如 username: "${XHS_USERNAME}"
-    username: ""
-    password: ""
+    username: "15890519520"
+    password: "l123456."
   zhihu:
     enabled: true
     max_daily_posts: 3
-    # 账号密码登录（推荐，替代手动复制Cookie）
-    # 支持 ${ENV_VAR} 环境变量引用
-    username: ""
-    password: ""
+    username: "15890519520"
+    password: "l123456."
 
 # 定时任务
 scheduler:

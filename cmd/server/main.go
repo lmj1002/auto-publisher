@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"auto-publisher/internal/collector"
@@ -64,11 +66,17 @@ func main() {
 
 	// Initialize database
 	db := initDatabase(cfg)
-	db.AutoMigrate(&model.Content{}, &model.CollectedContent{})
+	db.AutoMigrate(&model.Content{}, &model.CollectedContent{}, &model.Schedule{}, &model.PublishLog{}, &model.PublishTask{})
 
 	// Migration: change JSON columns to TEXT to avoid MySQL JSON validation errors
 	// (XHSImages and ZHTopics store comma-separated strings, not JSON arrays)
 	migrateJSONColumns(db)
+
+	// Migration: rename old status values to new names (review→reviewing, etc.)
+	migrateStatusValues(db)
+
+	// Migration: create Schedule records for existing Content with publish state
+	migrateToScheduleModel(db)
 
 	// Initialize Prompt manager
 	pm := provider.NewPromptManager("prompts")
@@ -129,6 +137,7 @@ func main() {
 
 		// Scheduling
 		api.POST("/contents/:id/schedule", contentHandler.Schedule)
+		api.POST("/contents/:id/unschedule", contentHandler.Unschedule)
 
 		// Publishing
 		api.POST("/contents/:id/publish", func(c *gin.Context) {
@@ -147,6 +156,13 @@ func main() {
 		// Content collection (new)
 		api.POST("/collect", collectionHandler.Collect)
 		api.GET("/collected", collectionHandler.List)
+
+		// Execution logs
+		api.GET("/logs", contentHandler.ListLogs)
+
+		// Schedule history
+		api.GET("/contents/:id/schedules", contentHandler.ListSchedules)
+		api.GET("/schedules/:sid/logs", contentHandler.GetScheduleLogs)
 
 		// System status
 		api.GET("/status", func(c *gin.Context) {
@@ -263,11 +279,20 @@ func initPublishers(cfg *config.Config) map[string]publisher.Publisher {
 		zhCfg := cfg.Platforms.Zhihu
 		username, password := zhCfg.ResolveCredentials()
 
+		// Fallback: if YAML didn't provide credentials (even via ${VAR}), try well-known env vars
+		if username == "" {
+			username = os.Getenv("ZHIHU_USERNAME")
+		}
+		if password == "" {
+			password = os.Getenv("ZHIHU_PASSWORD")
+		}
+
 		var zhPub publisher.Publisher
 		if username != "" && password != "" {
 			// Auto-login mode
-			zhPub = publisher.NewZhihuPublisherWithLogin(cookieDir, username, password)
-			slog.Info("zhihu publisher registered (auto-login)", "username", username)
+			screenshotDir := filepath.Join(cfg.Server.DataDir, "screenshots")
+			zhPub = publisher.NewZhihuPublisherWithLogin(cookieDir, screenshotDir, username, password, !cfg.Server.IsDebug())
+			slog.Info("zhihu publisher registered (auto-login + browser fallback)", "username", username)
 		} else {
 			// Legacy cookie mode
 			cookieSource := os.Getenv("ZHIHU_COOKIE")
@@ -277,7 +302,7 @@ func initPublishers(cfg *config.Config) map[string]publisher.Publisher {
 				}
 			}
 			if cookieSource != "" {
-				zhPub = publisher.NewZhihuPublisher(cookieSource)
+				zhPub = publisher.NewZhihuPublisher(cookieSource, cookieDir)
 				slog.Info("zhihu publisher registered (manual cookie)")
 			} else {
 				slog.Warn("zhihu publisher not enabled: missing credentials or cookie")
@@ -286,6 +311,19 @@ func initPublishers(cfg *config.Config) map[string]publisher.Publisher {
 
 		if zhPub != nil {
 			pubs["zhihu"] = zhPub
+
+			// Pre-warm login: validate the session asynchronously on startup.
+			// Only validates — does not trigger a login attempt. If no cached cookie
+			// exists, the login will happen on first publish instead.
+			go func() {
+				ctx := context.Background()
+				time.Sleep(2 * time.Second) // let server start first
+				if err := zhPub.Validate(ctx); err != nil {
+					slog.Warn("zhihu validate failed on startup, will retry on first publish",
+						"error", err,
+						"hint", "If using auto-login and CAPTCHA is required, set ZHIHU_COOKIE env var or place cookies in data/cookies/zhihu.cookie")
+				}
+			}()
 		}
 	}
 
@@ -293,6 +331,15 @@ func initPublishers(cfg *config.Config) map[string]publisher.Publisher {
 	if cfg.Platforms.Xiaohongshu.Enabled {
 		xhsCfg := cfg.Platforms.Xiaohongshu
 		username, password := xhsCfg.ResolveCredentials()
+
+		// Fallback: if YAML didn't provide credentials (even via ${VAR}), try well-known env vars
+		if username == "" {
+			username = os.Getenv("XHS_USERNAME")
+		}
+		if password == "" {
+			password = os.Getenv("XHS_PASSWORD")
+		}
+
 		screenshotDir := filepath.Join(cfg.Server.DataDir, "screenshots")
 
 		var xhsPub publisher.Publisher
@@ -319,6 +366,17 @@ func initPublishers(cfg *config.Config) map[string]publisher.Publisher {
 
 		if xhsPub != nil {
 			pubs["xiaohongshu"] = xhsPub
+
+			// Pre-warm login: validate the session asynchronously on startup.
+			// If the cached cookie is expired, this triggers a manual login
+			// (opens browser for QR scan) so the cookie is ready before the first publish.
+			go func() {
+				ctx := context.Background()
+				if err := xhsPub.Validate(ctx); err != nil {
+					slog.Warn("xiaohongshu validate failed on startup, will retry on first publish",
+						"error", err)
+				}
+			}()
 		}
 	}
 
@@ -431,4 +489,145 @@ func migrateJSONColumns(db *gorm.DB) {
 				"table", c.table, "column", c.column, "type", colType)
 		}
 	}
+}
+
+// migrateToScheduleModel creates Schedule records for existing Content that has
+// publish-related state (scheduled, published, failed). This is a one-time migration
+// to support the new Content 1:N Schedule data model. Idempotent: skips if schedules exist.
+func migrateToScheduleModel(db *gorm.DB) {
+	var count int64
+	db.Model(&model.Schedule{}).Count(&count)
+	if count > 0 {
+		slog.Info("schedule migration already completed, skipping", "existing_schedules", count)
+		return
+	}
+
+	slog.Info("starting schedule model migration...")
+
+	// Step 1: Find all Content with publish-related state
+	var contents []model.Content
+	db.Where("status IN ?", []model.ContentStatus{
+		model.StatusScheduled, model.StatusPublished, model.StatusFailed,
+	}).Find(&contents)
+
+	if len(contents) == 0 {
+		slog.Info("no content to migrate for schedules")
+		return
+	}
+
+	for _, c := range contents {
+		now := time.Now()
+		schedule := &model.Schedule{
+			ContentID:   c.ID,
+			Status:      mapContentStatusToSchedule(c.Status),
+			RetryCount:  c.RetryCount,
+			PublishedAt: c.PublishedAt,
+			CreatedAt:   c.CreatedAt,
+			UpdatedAt:   c.UpdatedAt,
+		}
+
+		if c.ScheduledAt != nil {
+			schedule.ScheduledAt = c.ScheduledAt
+		} else {
+			schedule.ScheduledAt = &now
+		}
+
+		if c.PublishError.Valid {
+			schedule.PublishError = c.PublishError
+		}
+
+		// For failed items, set next_retry_at to past so scheduler can pick them up
+		if c.Status == model.StatusFailed && c.RetryCount > 0 {
+			past := now.Add(-1 * time.Hour)
+			schedule.NextRetryAt = &past
+		}
+
+		db.Create(schedule)
+	}
+
+	// Step 2: Link existing PublishLog records to their Schedule
+	var logs []model.PublishLog
+	db.Where("schedule_id = 0").Find(&logs)
+
+	logMap := make(map[int64][]model.PublishLog)
+	for _, l := range logs {
+		logMap[l.ContentID] = append(logMap[l.ContentID], l)
+	}
+
+	for contentID, contentLogs := range logMap {
+		var schedule model.Schedule
+		if err := db.Where("content_id = ?", contentID).First(&schedule).Error; err != nil {
+			// Create a placeholder schedule
+			now := time.Now()
+			schedule = model.Schedule{
+				ContentID:   contentID,
+				Status:      model.ScheduleFailed,
+				ScheduledAt: &now,
+			}
+			db.Create(&schedule)
+		}
+		for _, l := range contentLogs {
+			db.Model(&l).Update("schedule_id", schedule.ID)
+		}
+	}
+
+	slog.Info("schedule model migration complete", "contents_migrated", len(contents), "logs_linked", len(logs))
+}
+
+// mapContentStatusToSchedule maps a Content status to the corresponding Schedule status.
+func mapContentStatusToSchedule(cs model.ContentStatus) model.ScheduleStatus {
+	switch cs {
+	case model.StatusScheduled:
+		return model.SchedulePending
+	case model.StatusPublished:
+		return model.ScheduleCompleted
+	case model.StatusFailed:
+		return model.ScheduleFailed
+	default:
+		return model.SchedulePending
+	}
+}
+
+// migrateStatusValues renames old status values to new ones so all records
+// use the current naming convention. Idempotent — safe to run multiple times.
+func migrateStatusValues(db *gorm.DB) {
+	migrations := []struct {
+		table  string
+		column string
+		from   string
+		to     string
+	}{
+		// Content: review → reviewing
+		{"contents", "status", "review", "reviewing"},
+		// Schedule: publishing → processing
+		{"schedules", "status", "publishing", "processing"},
+		// Schedule: published → completed
+		{"schedules", "status", "published", "completed"},
+	}
+
+	for _, m := range migrations {
+		result := db.Table(m.table).
+			Where(m.column+" = ?", m.from).
+			Update(m.column, m.to)
+		if result.Error != nil {
+			slog.Warn("status migration failed", "table", m.table, "from", m.from, "to", m.to, "error", result.Error)
+		} else if result.RowsAffected > 0 {
+			slog.Info("status migrated", "table", m.table, "from", m.from, "to", m.to, "rows", result.RowsAffected)
+		}
+	}
+}
+
+// platformEnvVarNames returns the environment variable names for setting cookies
+// for the given platforms, for display in error messages.
+func platformEnvVarNames(platforms []string) string {
+	var names []string
+	for _, p := range platforms {
+		switch p {
+		case "zhihu":
+			names = append(names, "ZHIHU_COOKIE")
+		case "xiaohongshu":
+			names = append(names, "XHS_COOKIE")
+		}
+	}
+	return strings.Join(names, " / ")
 }

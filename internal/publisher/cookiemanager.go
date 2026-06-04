@@ -16,9 +16,9 @@ import (
 // It supports both account/password login (recommended) and manual cookie strings
 // (legacy fallback). Cached cookies are stored on disk to avoid re-login on restart.
 type CookieManager struct {
-	platform   string       // platform name for logging and file naming
-	cookieDir  string       // directory for cached cookie files
-	cachedFile string       // path to the platform's cookie cache file
+	platform   string // platform name for logging and file naming
+	cookieDir  string // directory for cached cookie files
+	cachedFile string // path to the platform's cookie cache file
 
 	// Manual cookie string (legacy fallback)
 	manualCookie string
@@ -71,7 +71,7 @@ func NewCookieManager(platform, cookieDir string, opts ...CookieManagerOption) *
 func (cm *CookieManager) GetCookie(ctx context.Context) (string, error) {
 	// Fast path: in-memory cache (valid for 1 hour)
 	cm.mu.RLock()
-	if cm.cookie != "" && time.Since(cm.loadedAt) < 1*time.Hour {
+	if cm.cookie != "" && time.Since(cm.loadedAt) < 6*time.Hour {
 		c := cm.cookie
 		cm.mu.RUnlock()
 		return c, nil
@@ -82,7 +82,7 @@ func (cm *CookieManager) GetCookie(ctx context.Context) (string, error) {
 	defer cm.mu.Unlock()
 
 	// Double-check after acquiring write lock
-	if cm.cookie != "" && time.Since(cm.loadedAt) < 1*time.Hour {
+	if cm.cookie != "" && time.Since(cm.loadedAt) < 6*time.Hour {
 		return cm.cookie, nil
 	}
 
@@ -128,7 +128,15 @@ func (cm *CookieManager) Invalidate() {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	cm.cookie = ""
-	slog.Info("cookie invalidated", "platform", cm.platform)
+	// Also delete the disk cache to prevent reloading the expired cookie
+	if cm.cachedFile != "" {
+		if err := os.Remove(cm.cachedFile); err != nil && !os.IsNotExist(err) {
+			slog.Warn("failed to remove cached cookie file", "file", cm.cachedFile, "error", err)
+		} else {
+			slog.Info("cached cookie file removed", "file", cm.cachedFile)
+		}
+	}
+	slog.Info("cookie invalidated (memory + disk cleared)", "platform", cm.platform)
 }
 
 // HasManualCookie reports whether a manual cookie string is configured.

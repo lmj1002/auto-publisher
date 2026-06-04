@@ -18,7 +18,7 @@ import (
 
 // ContentHandler 内容管理 Handler
 type ContentHandler struct {
-	db *gorm.DB
+	db     *gorm.DB
 	router *provider.Router
 	cfg    *config.Config
 	pm     *provider.PromptManager
@@ -50,7 +50,8 @@ func (h *ContentHandler) List(c *gin.Context) {
 
 	tx := h.db.Model(&model.Content{})
 	if query.Status != "" {
-		tx = tx.Where("status = ?", query.Status)
+		statuses := strings.Split(string(query.Status), ",")
+		tx = tx.Where("status IN ?", statuses)
 	}
 	if query.Platform != "" {
 		tx = tx.Where("platform = ? OR platform = 'both'", query.Platform)
@@ -61,10 +62,39 @@ func (h *ContentHandler) List(c *gin.Context) {
 		Order("created_at DESC").
 		Find(&contents)
 
+	// Enrich with latest schedule info
+	type ContentWithSchedule struct {
+		model.Content
+		ScheduleScheduledAt  *time.Time `json:"schedule_scheduled_at,omitempty"`
+		ScheduleRetryCount   int        `json:"schedule_retry_count"`
+		SchedulePublishError string     `json:"schedule_publish_error,omitempty"`
+		ScheduleStatus       string     `json:"schedule_status,omitempty"`
+	}
+
+	result := make([]ContentWithSchedule, len(contents))
+	for i, c := range contents {
+		cws := ContentWithSchedule{Content: c}
+		var latest model.Schedule
+		if err := h.db.Where("content_id = ?", c.ID).Order("created_at DESC").First(&latest).Error; err == nil {
+			cws.ScheduleScheduledAt = latest.ScheduledAt
+			cws.ScheduleStatus = string(latest.Status)
+
+			// Get retry count and error from the latest PublishTask
+			var latestTask model.PublishTask
+			if err := h.db.Where("schedule_id = ?", latest.ID).Order("created_at DESC").First(&latestTask).Error; err == nil {
+				cws.ScheduleRetryCount = latestTask.RetryCount
+				if latestTask.PublishError.Valid {
+					cws.SchedulePublishError = latestTask.PublishError.String
+				}
+			}
+		}
+		result[i] = cws
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"list":      contents,
+			"list":      result,
 			"total":     total,
 			"page":      query.Page,
 			"page_size": query.PageSize,
@@ -72,7 +102,7 @@ func (h *ContentHandler) List(c *gin.Context) {
 	})
 }
 
-// Get 获取单条内容
+// Get 获取单条内容（含最新排期信息）
 func (h *ContentHandler) Get(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -86,7 +116,16 @@ func (h *ContentHandler) Get(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"code": 0, "data": content})
+	// Load latest schedule with PublishTasks
+	var latestSchedule model.Schedule
+	h.db.Where("content_id = ?", content.ID).
+		Preload("PublishTasks").
+		Order("created_at DESC").First(&latestSchedule)
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "data": gin.H{
+		"content":         content,
+		"latest_schedule": latestSchedule,
+	}})
 }
 
 // Update 更新内容（人工修改定稿）
@@ -144,6 +183,66 @@ func (h *ContentHandler) Delete(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "删除成功"})
+}
+
+// ==================== 执行日志 ====================
+
+// LogEntry 执行日志条目（JOIN content.topic）
+type LogEntry struct {
+	model.PublishLog
+	Topic string `json:"topic"`
+}
+
+// ListLogs 查询发布执行日志
+func (h *ContentHandler) ListLogs(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "50"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 50
+	}
+
+	// Build base query with filters
+	baseQuery := func(tx *gorm.DB) *gorm.DB {
+		if contentID := c.Query("content_id"); contentID != "" {
+			tx = tx.Where("publish_logs.content_id = ?", contentID)
+		}
+		if scheduleID := c.Query("schedule_id"); scheduleID != "" {
+			tx = tx.Where("publish_logs.schedule_id = ?", scheduleID)
+		}
+		if platform := c.Query("platform"); platform != "" {
+			tx = tx.Where("publish_logs.platform = ?", platform)
+		}
+		if status := c.Query("status"); status != "" {
+			tx = tx.Where("publish_logs.status = ?", status)
+		}
+		return tx
+	}
+
+	var total int64
+	baseQuery(h.db.Model(&model.PublishLog{})).Count(&total)
+
+	var logs []LogEntry
+	dataQuery := h.db.Table("publish_logs").
+		Select("publish_logs.*, contents.topic").
+		Joins("LEFT JOIN contents ON contents.id = publish_logs.content_id")
+	dataQuery = baseQuery(dataQuery)
+	dataQuery.Order("publish_logs.created_at DESC").
+		Offset((page - 1) * pageSize).
+		Limit(pageSize).
+		Scan(&logs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": gin.H{
+			"list":      logs,
+			"total":     total,
+			"page":      page,
+			"page_size": pageSize,
+		},
+	})
 }
 
 // ==================== AI 生成 ====================
@@ -210,11 +309,12 @@ func (h *ContentHandler) GenerateDraft(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"content":      content,
-			"titles":       parsed.Titles,
-			"body":         parsed.Body,
-			"tags":         parsed.Tags,
-			"duration_ms":  textResp.Duration.Milliseconds(),
+			"content":     content,
+			"raw_output":  textResp.RawOutput,
+			"titles":      parsed.Titles,
+			"body":        parsed.Body,
+			"tags":        parsed.Tags,
+			"duration_ms": textResp.Duration.Milliseconds(),
 		},
 	})
 }
@@ -291,8 +391,6 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 		content.XHSImages = stringsJoin(imgURLs, ",")
 	}
 
-	h.db.Create(content)
-
 	if err := h.db.Create(content).Error; err != nil {
 		slog.Error("save generated content failed", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "保存内容失败"})
@@ -303,6 +401,7 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 		"code": 0,
 		"data": gin.H{
 			"content":    content,
+			"raw_output": textResp.RawOutput,
 			"titles":     parsed.Titles,
 			"body":       parsed.Body,
 			"tags":       parsed.Tags,
@@ -314,7 +413,7 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 
 // ==================== 排期发布 ====================
 
-// Schedule 设置排期
+// Schedule 设置排期（创建 Schedule 记录）
 func (h *ContentHandler) Schedule(c *gin.Context) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil {
@@ -339,17 +438,162 @@ func (h *ContentHandler) Schedule(c *gin.Context) {
 		return
 	}
 
-	if err := h.db.Model(&model.Content{}).Where("id = ?", id).Updates(map[string]interface{}{
-		"status":       model.StatusScheduled,
-		"scheduled_at": scheduledAt,
-	}).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "排期设置失败"})
+	// Verify content exists and is in a schedulable state
+	var content model.Content
+	if err := h.db.First(&content, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "内容不存在"})
+		return
+	}
+	if !isSchedulable(content.Status) {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "当前状态不能排期，请先定稿"})
 		return
 	}
 
+	tx := h.db.Begin()
+
+	// Cancel any existing active schedules for this content (reschedule scenario)
+	if err := tx.Model(&model.Schedule{}).
+		Where("content_id = ? AND status IN ?", id,
+			[]model.ScheduleStatus{model.SchedulePending, model.ScheduleProcessing}).
+		Update("status", model.ScheduleCancelled).Error; err != nil {
+		tx.Rollback()
+		slog.Error("cancel existing schedules failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "取消旧排期失败"})
+		return
+	}
+	// Cancel non-terminal PublishTasks for those schedules
+	if err := tx.Model(&model.PublishTask{}).
+		Where("content_id = ? AND status NOT IN ?", id,
+			[]model.PublishTaskStatus{model.TaskPublished, model.TaskFailed}).
+		Update("status", model.TaskFailed).
+		Update("next_retry_at", nil).
+		Update("publish_error", "superseded by new schedule").Error; err != nil {
+		tx.Rollback()
+		slog.Error("cancel existing publish tasks failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "取消旧发布任务失败"})
+		return
+	}
+
+	// Create Schedule + PublishTasks in a transaction
+	schedule := &model.Schedule{
+		ContentID:   id,
+		ScheduledAt: &scheduledAt,
+		Status:      model.SchedulePending,
+	}
+	tasks := buildPublishTasks(content.ID, schedule.ID, content.Platform)
+
+	if err := tx.Create(schedule).Error; err != nil {
+		tx.Rollback()
+		slog.Error("create schedule failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "排期创建失败"})
+		return
+	}
+	for _, t := range tasks {
+		t.ScheduleID = schedule.ID
+		if err := tx.Create(t).Error; err != nil {
+			tx.Rollback()
+			slog.Error("create publish task failed", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "创建发布任务失败"})
+			return
+		}
+	}
+	if err := tx.Model(&content).Update("status", model.StatusScheduled).Error; err != nil {
+		tx.Rollback()
+		slog.Error("update content status failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "状态更新失败"})
+		return
+	}
+	tx.Commit()
+
 	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "排期设置成功", "data": gin.H{
-		"scheduled_at": scheduledAt.Format("2006-01-02 15:04:05"),
+		"schedule_id":   schedule.ID,
+		"scheduled_at":  scheduledAt.Format("2006-01-02 15:04:05"),
+		"publish_tasks": len(tasks),
 	}})
+}
+
+// Unschedule 取消排期（取消最新的 pending/failed Schedule）
+func (h *ContentHandler) Unschedule(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "无效的 ID"})
+		return
+	}
+
+	var content model.Content
+	if err := h.db.First(&content, id).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": 1, "msg": "内容不存在"})
+		return
+	}
+
+	if content.Status != model.StatusScheduled && content.Status != model.StatusFailed &&
+		content.Status != model.StatusPartiallyPublished {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "只有已排期、部分发布或失败的内容可以取消排期"})
+		return
+	}
+
+	// Find the latest cancellable schedule (pending, processing, or failed)
+	var schedule model.Schedule
+	if err := h.db.Where("content_id = ? AND status IN ?", id,
+		[]model.ScheduleStatus{model.SchedulePending, model.ScheduleProcessing, model.ScheduleFailed}).
+		Order("created_at DESC").First(&schedule).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": "没有可取消的排期"})
+		return
+	}
+
+	tx := h.db.Begin()
+	// Cancel schedule
+	if err := tx.Model(&schedule).Update("status", model.ScheduleCancelled).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "取消排期失败"})
+		return
+	}
+	// Cancel any non-terminal PublishTasks
+	if err := tx.Model(&model.PublishTask{}).
+		Where("schedule_id = ? AND status NOT IN ?", schedule.ID,
+			[]model.PublishTaskStatus{model.TaskPublished, model.TaskFailed}).
+		Update("status", model.TaskFailed).
+		Update("next_retry_at", nil).
+		Update("publish_error", "cancelled by user").Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "取消发布任务失败"})
+		return
+	}
+	// Update content status back to approved
+	if err := tx.Model(&content).Update("status", model.StatusApproved).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "状态更新失败"})
+		return
+	}
+	tx.Commit()
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "msg": "已取消排期"})
+}
+
+// ListSchedules 查看某条内容的所有排期记录（含 PublishTasks）
+func (h *ContentHandler) ListSchedules(c *gin.Context) {
+	contentID := c.Param("id")
+	var schedules []model.Schedule
+	h.db.Where("content_id = ?", contentID).
+		Preload("PublishTasks").
+		Order("created_at DESC").Find(&schedules)
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": gin.H{"list": schedules},
+	})
+}
+
+// GetScheduleLogs 查看某次排期的所有发布日志
+func (h *ContentHandler) GetScheduleLogs(c *gin.Context) {
+	scheduleID := c.Param("sid")
+	var logs []model.PublishLog
+	h.db.Where("schedule_id = ?", scheduleID).Order("created_at ASC").Find(&logs)
+
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": gin.H{"list": logs},
+	})
 }
 
 // ==================== 辅助函数 ====================
@@ -414,4 +658,40 @@ func stringsJoin(parts []string, sep string) string {
 		result += sep + p
 	}
 	return result
+}
+
+// isSchedulable returns true if the content status allows scheduling.
+func isSchedulable(status model.ContentStatus) bool {
+	switch status {
+	case model.StatusApproved, model.StatusFailed, model.StatusPartiallyPublished:
+		return true
+	default:
+		return false
+	}
+}
+
+// buildPublishTasks creates PublishTask records for the given content platform.
+// For platform=both, creates two tasks (zhihu + xiaohongshu).
+func buildPublishTasks(contentID, scheduleID int64, platform model.Platform) []*model.PublishTask {
+	platforms := expandTargetPlatforms(platform)
+	tasks := make([]*model.PublishTask, 0, len(platforms))
+	for _, p := range platforms {
+		tasks = append(tasks, &model.PublishTask{
+			ContentID:  contentID,
+			ScheduleID: scheduleID,
+			Platform:   string(p),
+			Status:     model.TaskPending,
+		})
+	}
+	return tasks
+}
+
+// expandTargetPlatforms returns individual platforms from a content target.
+func expandTargetPlatforms(platform model.Platform) []model.Platform {
+	switch platform {
+	case model.PlatformBoth:
+		return []model.Platform{model.PlatformZhihu, model.PlatformXiaohongshu}
+	default:
+		return []model.Platform{platform}
+	}
 }
