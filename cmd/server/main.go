@@ -66,6 +66,10 @@ func main() {
 	db := initDatabase(cfg)
 	db.AutoMigrate(&model.Content{}, &model.CollectedContent{})
 
+	// Migration: change JSON columns to TEXT to avoid MySQL JSON validation errors
+	// (XHSImages and ZHTopics store comma-separated strings, not JSON arrays)
+	migrateJSONColumns(db)
+
 	// Initialize Prompt manager
 	pm := provider.NewPromptManager("prompts")
 	if err := pm.LoadAll(); err != nil {
@@ -382,4 +386,49 @@ func initScheduler(cfg *config.Config, db *gorm.DB, pubs map[string]publisher.Pu
 		"retry_delay", retryDelay,
 	)
 	return sched
+}
+
+// migrateJSONColumns alters XHSImages and ZHTopics from JSON to TEXT type.
+// These columns store comma-separated strings, not JSON arrays, so MySQL's JSON
+// type would reject them with "Invalid JSON text" errors on insert.
+// This migration is idempotent — it silently succeeds if the columns are already TEXT.
+func migrateJSONColumns(db *gorm.DB) {
+	columns := []struct {
+		table  string
+		column string
+	}{
+		{"contents", "xhs_images"},
+		{"contents", "zh_topics"},
+	}
+
+	for _, c := range columns {
+		// Check current column type
+		var colType string
+		row := db.Raw(
+			"SELECT COLUMN_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?",
+			db.Migrator().CurrentDatabase(), c.table, c.column,
+		).Row()
+		if row != nil {
+			row.Scan(&colType)
+		}
+
+		if colType == "" {
+			slog.Warn("column type check skipped, column may not exist", "table", c.table, "column", c.column)
+			continue
+		}
+
+		// If it's still JSON, alter to TEXT
+		if colType == "json" {
+			sql := fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s TEXT", c.table, c.column)
+			if err := db.Exec(sql).Error; err != nil {
+				slog.Warn("failed to alter column type", "sql", sql, "error", err)
+			} else {
+				slog.Info("column type migrated", "table", c.table, "column", c.column,
+					"from", colType, "to", "text")
+			}
+		} else {
+			slog.Debug("column already correct type, skipping migration",
+				"table", c.table, "column", c.column, "type", colType)
+		}
+	}
 }

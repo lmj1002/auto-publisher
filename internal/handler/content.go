@@ -293,6 +293,12 @@ func (h *ContentHandler) GenerateDraftWithImage(c *gin.Context) {
 
 	h.db.Create(content)
 
+	if err := h.db.Create(content).Error; err != nil {
+		slog.Error("save generated content failed", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 1, "msg": "保存内容失败"})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": gin.H{

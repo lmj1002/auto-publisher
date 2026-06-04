@@ -46,10 +46,10 @@ type Content struct {
 	// 分平台内容
 	XHSTitle  string        `gorm:"type:varchar(500);comment:小红书标题" json:"xhs_title,omitempty"`
 	XHSBody   string        `gorm:"type:text;comment:小红书正文" json:"xhs_body,omitempty"`
-	XHSImages string        `gorm:"type:json;comment:小红书图片URL列表" json:"xhs_images,omitempty"`
+	XHSImages string        `gorm:"type:text;comment:小红书图片URL列表" json:"xhs_images,omitempty"`
 	ZHTitle   string        `gorm:"type:varchar(500);comment:知乎标题" json:"zh_title,omitempty"`
 	ZHBody    string        `gorm:"type:text;comment:知乎正文" json:"zh_body,omitempty"`
-	ZHTopics  string        `gorm:"type:json;comment:知乎话题标签" json:"zh_topics,omitempty"`
+	ZHTopics  string        `gorm:"type:text;comment:知乎话题标签" json:"zh_topics,omitempty"`
 
 	// 核心观点（用于AI生成）
 	KeyPoints string `gorm:"type:text;comment:核心观点" json:"key_points,omitempty"`

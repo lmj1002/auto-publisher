@@ -3,6 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -80,7 +81,34 @@ func (p *ClaudeCodeProvider) Generate(ctx context.Context, req *GenerateRequest)
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("claude CLI: %w\nstderr: %s", err, stderr.String())
+		stderrStr := stderr.String()
+		dur := time.Since(start)
+
+		// Detect timeout vs other failures
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			slog.Warn("claude CLI timed out",
+				"timeout", p.timeout,
+				"prompt_len", len(fullPrompt),
+				"duration", dur,
+			)
+			return nil, fmt.Errorf("claude CLI timed out after %v (max_turns=1)", p.timeout)
+		}
+
+		exitCode := -1
+		if cmd.ProcessState != nil {
+			exitCode = cmd.ProcessState.ExitCode()
+		}
+
+		slog.Error("claude CLI subprocess failed",
+			"error", err,
+			"stderr", stderrStr,
+			"exit_code", exitCode,
+			"duration", dur,
+			"prompt_len", len(fullPrompt),
+			"platform", req.Platform,
+			"work_dir", p.workDir,
+		)
+		return nil, fmt.Errorf("claude CLI: %w\nstderr: %s", err, stderrStr)
 	}
 
 	rawOutput := stdout.String()
